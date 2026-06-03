@@ -1,186 +1,300 @@
 import {
-  BadgeCheck,
   Cast,
   ChevronRight,
+  Eye,
+  Keyboard,
   Layers3,
-  Maximize2,
-  MonitorUp,
-  Sparkles,
+  Mic,
+  MonitorDot,
+  RadioTower,
+  Settings,
+  Zap,
 } from "lucide-react";
 
-const deckSlots = [
-  { title: "Abertura", tone: "bg-[#126562]" },
-  { title: "Cena 01", tone: "bg-[#bf492c]" },
-  { title: "Cena 02", tone: "bg-[#d4b15f]" },
-  { title: "Final", tone: "bg-[#7c8f82]" },
+const tabs = ["Macros", "Deck", "Dispositivos"];
+
+const macroTiles = [
+  {
+    title: "Cena inicial",
+    key: "cell-1-1",
+    detail: "OBS cena: Abertura",
+    icon: MonitorDot,
+    active: true,
+  },
+  {
+    title: "Camera",
+    key: "cell-1-2",
+    detail: "OBS mostrar fonte",
+    icon: Eye,
+    active: true,
+  },
+  {
+    title: "Microfone",
+    key: "cell-2-1",
+    detail: "OBS mutar audio",
+    icon: Mic,
+    active: false,
+  },
+  {
+    title: "Vinheta",
+    key: "cell-2-2",
+    detail: "Atalho de macro",
+    icon: Zap,
+    active: true,
+  },
 ];
+
+const deckCells = Array.from({ length: 12 }, (_, index) => {
+  const macro = macroTiles[index % macroTiles.length];
+
+  return {
+    ...macro,
+    label: String(index + 1).padStart(2, "0"),
+    empty: index > 5,
+  };
+});
 
 export default function Home() {
   return (
-    <main className="min-h-screen overflow-hidden">
-      <section className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-5 py-5 sm:px-8 lg:px-10">
-        <header className="flex h-16 items-center justify-between border-b border-white/10">
-          <div className="flex items-center gap-3">
-            <div className="grid size-10 place-items-center rounded bg-[#f7f4ec] text-[#08090c]">
-              <Cast className="size-5" aria-hidden="true" />
-            </div>
-            <div>
-              <p className="text-lg font-bold tracking-[0]">Texstream</p>
-              <p className="text-xs text-white/52">Virtual deck host</p>
-            </div>
-          </div>
-
-          <nav className="hidden items-center gap-6 text-sm text-white/62 sm:flex">
-            <a className="transition hover:text-white" href="#deck">
-              Deck
-            </a>
-            <a className="transition hover:text-white" href="#preview">
-              Preview
-            </a>
-          </nav>
-        </header>
-
-        <div className="grid flex-1 items-center gap-10 py-8 lg:grid-cols-[0.9fr_1.1fr] lg:py-10">
-          <div className="max-w-xl">
-            <div className="mb-5 inline-flex items-center gap-2 rounded border border-white/12 bg-white/[0.04] px-3 py-2 text-sm text-white/70">
-              <Sparkles className="size-4 text-[#d4b15f]" aria-hidden="true" />
-              Streaming visual direto no browser
+    <main className="min-h-screen overflow-hidden bg-[#020617] text-zinc-100">
+      <div className="min-h-screen bg-[radial-gradient(circle_at_20%_0%,rgba(34,211,238,0.16),transparent_34rem),radial-gradient(circle_at_82%_12%,rgba(59,130,246,0.12),transparent_28rem)]">
+        <header className="border-b border-white/10 bg-[#0f172a]/90">
+          <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4 sm:px-6">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex size-9 items-center justify-center rounded-xl border border-cyan-400/30 bg-cyan-400/15 text-cyan-300 shadow-[0_0_28px_rgba(34,211,238,0.16)]">
+                <Keyboard className="size-5" aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <h1 className="truncate text-sm font-semibold text-white">
+                  Texstream
+                </h1>
+                <p className="truncate text-xs text-slate-400">
+                  macros, OBS e deck virtual
+                </p>
+              </div>
             </div>
 
-            <h1 className="text-5xl font-black leading-[0.95] tracking-[0] text-[#f7f4ec] sm:text-6xl lg:text-7xl">
-              Texstream
-            </h1>
-            <p className="mt-6 max-w-lg text-lg leading-8 text-white/68">
-              Uma tela limpa para apresentar o projeto e hospedar o deck virtual
-              que conduz cenas, overlays e momentos da transmissão.
-            </p>
-
-            <div className="mt-8 flex flex-wrap gap-3">
-              <a
-                href="#deck"
-                className="inline-flex h-12 items-center gap-2 rounded bg-[#f7f4ec] px-5 text-sm font-bold text-[#08090c] transition hover:bg-white"
-              >
-                Abrir deck
-                <ChevronRight className="size-4" aria-hidden="true" />
-              </a>
-              <a
-                href="#preview"
-                className="inline-flex h-12 items-center gap-2 rounded border border-white/14 px-5 text-sm font-bold text-white transition hover:border-white/34 hover:bg-white/[0.04]"
-              >
-                Ver preview
-              </a>
-            </div>
-
-            <div className="mt-10 grid max-w-lg grid-cols-3 gap-3">
-              {[
-                ["4", "cenas"],
-                ["16:9", "canvas"],
-                ["web", "host"],
-              ].map(([value, label]) => (
-                <div
-                  key={label}
-                  className="border border-white/10 bg-black/18 px-4 py-3"
+            <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/5 p-1 sm:flex">
+              {tabs.map((tab) => (
+                <a
+                  key={tab}
+                  href={tab === "Deck" ? "#deck" : "#overview"}
+                  className={[
+                    "rounded-full px-4 py-1.5 text-xs font-medium transition",
+                    tab === "Deck"
+                      ? "bg-cyan-400 text-slate-950"
+                      : "text-slate-300 hover:bg-white/10 hover:text-white",
+                  ].join(" ")}
                 >
-                  <p className="text-2xl font-black">{value}</p>
-                  <p className="mt-1 text-xs uppercase text-white/42">{label}</p>
-                </div>
+                  {tab}
+                </a>
               ))}
             </div>
+
+            <a
+              href="/virtual-deck/demo"
+              className="flex size-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10"
+              aria-label="Abrir deck virtual"
+              title="Abrir deck virtual"
+            >
+              <Cast className="size-4" aria-hidden="true" />
+            </a>
           </div>
+        </header>
+
+        <section className="mx-auto grid max-w-7xl gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+          <aside id="overview" className="grid gap-4">
+            <article className="rounded-3xl border border-white/10 bg-[#0f172a]/90 p-5 shadow-[0_0_40px_rgba(15,23,42,0.7)]">
+              <div className="mb-6 flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300">
+                    web host
+                  </div>
+                  <h2 className="mt-2 text-3xl font-bold leading-tight text-white sm:text-4xl">
+                    Textream Deck
+                  </h2>
+                  <p className="mt-3 max-w-md text-sm leading-6 text-slate-400">
+                    Uma pagina web simples, com o mesmo visual do app, para
+                    apresentar o Texstream e hospedar o deck virtual no Vercel.
+                  </p>
+                </div>
+                <span className="h-3 w-3 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.85)]" />
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                {[
+                  ["12", "teclas"],
+                  ["OBS", "ready"],
+                  ["web", "Vercel"],
+                ].map(([value, label]) => (
+                  <div
+                    key={label}
+                    className="rounded-xl bg-[#020617]/70 px-2 py-3"
+                  >
+                    <div className="font-semibold text-white">{value}</div>
+                    <div className="mt-1 text-slate-500">{label}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-2">
+                <a
+                  href="/virtual-deck/demo"
+                  className="inline-flex items-center gap-2 rounded-full bg-cyan-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
+                >
+                  Abrir deck
+                  <ChevronRight className="size-4" aria-hidden="true" />
+                </a>
+                <a
+                  href="#deck"
+                  className="inline-flex items-center gap-2 rounded-full border border-cyan-400/40 bg-cyan-400/10 px-4 py-2 text-sm font-medium text-cyan-200 transition hover:bg-cyan-400/20"
+                >
+                  Ver preview
+                </a>
+              </div>
+            </article>
+
+            <article className="rounded-3xl border border-white/10 bg-[#0f172a]/90 p-4 shadow-[0_0_40px_rgba(15,23,42,0.7)]">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-white">OBS</h2>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Aguardando conexao automatica
+                  </p>
+                </div>
+                <RadioTower className="size-5 text-cyan-300" aria-hidden="true" />
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                {[
+                  ["4", "cenas"],
+                  ["8", "fontes"],
+                  ["2", "audio"],
+                ].map(([value, label]) => (
+                  <div
+                    key={label}
+                    className="rounded-xl bg-[#020617]/70 px-2 py-2"
+                  >
+                    <div className="font-semibold text-white">{value}</div>
+                    <div className="text-slate-500">{label}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-3 rounded-xl bg-white/5 px-3 py-2 text-xs text-slate-300">
+                Painel visual reservado para status, URL publica e sincronizacao
+                do deck virtual.
+              </div>
+            </article>
+          </aside>
 
           <section
             id="deck"
-            className="w-full border border-white/10 bg-[#101116]/88 shadow-2xl shadow-black/30"
+            className="grid gap-4 lg:grid-rows-[auto_minmax(0,1fr)]"
           >
-            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-              <div className="flex items-center gap-2">
-                <Layers3 className="size-4 text-[#d4b15f]" aria-hidden="true" />
-                <h2 className="text-sm font-bold uppercase text-white/70">
-                  Deck virtual
-                </h2>
+            <article className="rounded-3xl border border-white/10 bg-[#0f172a]/90 p-4 shadow-[0_0_40px_rgba(15,23,42,0.7)]">
+              <div className="mb-4 flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.22em] text-cyan-300">
+                    configuracao
+                  </div>
+                  <h2 className="mt-1 text-lg font-semibold text-white">
+                    Deck virtual
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-400">
+                    A area abaixo e o ponto de entrada para o deck hospedado.
+                  </p>
+                </div>
+                <Settings className="size-5 text-slate-400" aria-hidden="true" />
               </div>
-              <button
-                className="grid size-9 place-items-center rounded border border-white/10 text-white/62 transition hover:border-white/24 hover:text-white"
-                aria-label="Expandir deck virtual"
-                title="Expandir deck virtual"
-              >
-                <Maximize2 className="size-4" aria-hidden="true" />
-              </button>
-            </div>
 
-            <div className="grid gap-0 lg:grid-cols-[12rem_1fr]">
-              <aside className="border-b border-white/10 lg:border-b-0 lg:border-r">
-                <div className="grid grid-cols-2 lg:grid-cols-1">
-                  {deckSlots.map((slot, index) => (
-                    <button
-                      key={slot.title}
-                      className="flex min-h-20 items-center gap-3 border-r border-white/8 px-4 text-left transition hover:bg-white/[0.04] lg:border-b lg:border-r-0"
-                    >
-                      <span className={`size-3 rounded-sm ${slot.tone}`} />
-                      <span>
-                        <span className="block text-sm font-bold text-white">
-                          {slot.title}
-                        </span>
-                        <span className="mt-1 block text-xs text-white/42">
-                          Slot {String(index + 1).padStart(2, "0")}
-                        </span>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {macroTiles.map((macro) => (
+                  <div
+                    key={macro.key}
+                    className="min-h-[104px] rounded-2xl border border-white/10 bg-[#1e293b]/70 p-3 transition hover:border-cyan-400/35 hover:bg-[#1e293b]"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-[10px] uppercase tracking-[0.18em] text-cyan-300">
+                          Macro
+                        </div>
+                        <h3 className="mt-1 truncate text-sm font-semibold text-white">
+                          {macro.title}
+                        </h3>
+                      </div>
+                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-slate-200">
+                        {macro.key}
                       </span>
-                    </button>
-                  ))}
-                </div>
-              </aside>
-
-              <div className="p-4 sm:p-5">
-                <div
-                  id="preview"
-                  className="relative aspect-video min-h-64 overflow-hidden border border-white/10 bg-[#08090c]"
-                >
-                  <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(0deg,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:32px_32px]" />
-                  <div className="absolute inset-x-6 top-6 flex items-center justify-between">
-                    <div className="flex items-center gap-2 rounded bg-black/36 px-3 py-2 text-xs text-white/70">
-                      <BadgeCheck className="size-4 text-[#7c8f82]" />
-                      Ready
                     </div>
-                    <div className="rounded bg-[#bf492c] px-3 py-2 text-xs font-bold">
-                      LIVE DECK
-                    </div>
-                  </div>
-
-                  <div className="absolute bottom-6 left-6 right-6">
-                    <div className="mb-4 h-1.5 w-28 bg-[#d4b15f]" />
-                    <p className="text-3xl font-black tracking-[0] text-white sm:text-5xl">
-                      Cena principal
-                    </p>
-                    <p className="mt-3 max-w-md text-sm leading-6 text-white/62">
-                      Area reservada para renderizar o deck virtual, previews de
-                      cards, cenas e controles da transmissao.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  {[
-                    [MonitorUp, "Output", "16:9"],
-                    [Cast, "Stream", "Browser"],
-                    [Layers3, "Deck", "4 slots"],
-                  ].map(([Icon, label, value]) => (
-                    <div
-                      key={String(label)}
-                      className="flex min-h-16 items-center gap-3 border border-white/10 bg-white/[0.03] px-4"
-                    >
-                      <Icon className="size-5 text-[#d4b15f]" aria-hidden="true" />
-                      <div>
-                        <p className="text-sm font-bold">{value as string}</p>
-                        <p className="text-xs text-white/42">{label as string}</p>
+                    <div className="mt-3 grid gap-2 text-xs text-slate-300">
+                      <div className="truncate rounded-xl bg-cyan-400/10 px-2.5 py-1.5 text-cyan-200">
+                        {macro.key}
+                      </div>
+                      <div className="truncate rounded-xl bg-white/5 px-2.5 py-1.5">
+                        {macro.detail}
                       </div>
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ))}
               </div>
-            </div>
+            </article>
+
+            <article className="rounded-3xl border border-white/10 bg-[#0f172a]/90 p-4 shadow-[0_0_40px_rgba(15,23,42,0.7)]">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Layers3 className="size-5 text-cyan-300" aria-hidden="true" />
+                  <h2 className="text-lg font-semibold text-white">
+                    Preview touch
+                  </h2>
+                </div>
+                <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-200">
+                  online
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                {deckCells.map((cell, index) => {
+                  const Icon = cell.icon;
+
+                  return cell.empty ? (
+                    <div
+                      key={`${cell.key}-${index}`}
+                      className="flex aspect-square min-h-0 items-center justify-center rounded-2xl border border-dashed border-white/15 bg-white/5 text-sm font-semibold text-slate-600"
+                    >
+                      {cell.label}
+                    </div>
+                  ) : (
+                    <a
+                      key={`${cell.key}-${index}`}
+                      href="/virtual-deck/demo"
+                      className="relative aspect-square min-h-0 overflow-hidden rounded-2xl border border-white/10 bg-[#1e293b]/90 p-3 shadow-[0_0_28px_rgba(34,211,238,0.08)] transition active:scale-95 hover:border-cyan-400/40"
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-transparent" />
+                      <div
+                        className={[
+                          "relative z-10 mx-auto flex size-12 items-center justify-center rounded-2xl bg-white/10",
+                          cell.active ? "text-cyan-200" : "text-slate-500",
+                        ].join(" ")}
+                      >
+                        <Icon className="size-6" aria-hidden="true" />
+                      </div>
+                      <div className="absolute bottom-3 left-3 right-3 z-10 text-center">
+                        <div className="truncate text-sm font-bold text-white">
+                          {cell.title}
+                        </div>
+                        <div className="mt-1 text-[10px] uppercase tracking-[0.16em] text-slate-300">
+                          {cell.label}
+                        </div>
+                      </div>
+                    </a>
+                  );
+                })}
+              </div>
+            </article>
           </section>
-        </div>
-      </section>
+        </section>
+      </div>
     </main>
   );
 }
