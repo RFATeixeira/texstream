@@ -45,6 +45,7 @@ type IconProps = SVGProps<SVGSVGElement> & {
   strokeWidth?: number;
 };
 type UserProfile = {
+  id: string;
   displayName: string;
   email: string;
   photoUrl: string;
@@ -52,6 +53,9 @@ type UserProfile = {
 
 const BACKEND_PARAM_KEYS = ["host", "backendHost", "port", "backendPort"];
 const USER_PARAM_KEYS = [
+  "id",
+  "userId",
+  "uid",
   "displayName",
   "userName",
   "name",
@@ -221,6 +225,7 @@ function buildDeckHref(deck: VirtualDeck) {
 function getUserProfileFromUrl() {
   if (typeof window === "undefined") {
     return {
+      id: "",
       displayName: "",
       email: "",
       photoUrl: "",
@@ -228,6 +233,7 @@ function getUserProfileFromUrl() {
   }
 
   const params = new URLSearchParams(window.location.search);
+  const id = params.get("id") || params.get("userId") || params.get("uid") || "";
   const displayName =
     params.get("displayName") || params.get("userName") || params.get("name") || "";
   const email = params.get("email") || params.get("userEmail") || "";
@@ -239,12 +245,13 @@ function getUserProfileFromUrl() {
     "";
 
   const profile = {
+    id: id.trim(),
     displayName: displayName.trim(),
     email: email.trim(),
     photoUrl: photoUrl.trim(),
   };
 
-  if (profile.displayName || profile.email || profile.photoUrl) {
+  if (isLoggedIn(profile)) {
     window.localStorage.setItem(
       "textream:virtual-deck-user",
       JSON.stringify(profile)
@@ -258,6 +265,7 @@ function getUserProfileFromUrl() {
 
     if (cachedProfile) {
       return {
+        id: "",
         displayName: "",
         email: "",
         photoUrl: "",
@@ -267,6 +275,20 @@ function getUserProfileFromUrl() {
   } catch {
     window.localStorage.removeItem("textream:virtual-deck-user");
   }
+
+  return profile;
+}
+
+function isLoggedIn(profile: UserProfile) {
+  return Boolean(profile.id || profile.displayName || profile.email || profile.photoUrl);
+}
+
+function useUserProfile() {
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+
+  useEffect(() => {
+    setProfile(getUserProfileFromUrl());
+  }, []);
 
   return profile;
 }
@@ -336,8 +358,7 @@ function DeckIcon({ macro }: { macro?: MacroTemplate }) {
   });
 }
 
-function UserAvatar() {
-  const [profile] = useState(getUserProfileFromUrl);
+function UserAvatar({ profile }: { profile: UserProfile }) {
   const [photoUrl, setPhotoUrl] = useState(profile.photoUrl);
 
   if (photoUrl) {
@@ -362,10 +383,37 @@ function UserAvatar() {
   );
 }
 
+function LoginRequired() {
+  return (
+    <main className="flex min-h-dvh items-center justify-center bg-[#12161C] p-5 text-white">
+      <div className="w-full max-w-md rounded-2xl bg-[#181E24] p-6 text-center">
+        <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-2xl bg-[#1B242E] text-[#55A8FF]">
+          <TextreamLogoIcon size={36} />
+        </div>
+        <h1 className="text-xl font-bold">Login necessario</h1>
+        <p className="mt-3 text-sm leading-6 text-slate-400">
+          Abra o deck virtual pelo app desktop do Textream para sincronizar sua
+          conta e acessar os controles.
+        </p>
+      </div>
+    </main>
+  );
+}
+
+function AuthLoading() {
+  return (
+    <main className="flex min-h-dvh items-center justify-center bg-[#12161C] text-white">
+      <LoaderCircle className="size-7 animate-spin text-[#00b4ff]" aria-hidden="true" />
+    </main>
+  );
+}
+
 function Shell({
   children,
+  profile,
 }: {
   children: ReactNode;
+  profile: UserProfile;
 }) {
   return (
     <main className="min-h-dvh bg-[#12161C] text-white p-4 h-screen">
@@ -438,7 +486,7 @@ function Shell({
               >
                 <CircleHelp className="size-5" aria-hidden="true" />
               </button>
-              <UserAvatar />
+              <UserAvatar profile={profile} />
             </div>
           </header>
 
@@ -450,11 +498,17 @@ function Shell({
 }
 
 export function VirtualDeckHome() {
+  const profile = useUserProfile();
   const [decks, setDecks] = useState<VirtualDeck[]>([]);
   const [macros, setMacros] = useState<MacroTemplate[]>([]);
   const [state, setState] = useState<LoadState>("loading");
+  const loggedIn = profile ? isLoggedIn(profile) : false;
 
   const load = useCallback(async () => {
+    if (!loggedIn) {
+      return;
+    }
+
     try {
       setState((current) => (current === "ready" ? current : "loading"));
       const [nextDecks, nextMacros] = await Promise.all([
@@ -468,17 +522,29 @@ export function VirtualDeckHome() {
     } catch {
       setState("error");
     }
-  }, []);
+  }, [loggedIn]);
 
   useEffect(() => {
+    if (!loggedIn) {
+      return;
+    }
+
     void load();
     const interval = window.setInterval(load, 5000);
 
     return () => window.clearInterval(interval);
-  }, [load]);
+  }, [load, loggedIn]);
+
+  if (!profile) {
+    return <AuthLoading />;
+  }
+
+  if (!loggedIn) {
+    return <LoginRequired />;
+  }
 
   return (
-    <Shell>
+    <Shell profile={profile}>
       <div className="grid flex-1 content-start gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {decks.map((deck) => {
           const configuredKeys = getDeckMacros(macros, deck.id).length;
@@ -512,7 +578,7 @@ export function VirtualDeckHome() {
                 <div className="flex shrink-0 items-center gap-3">
                   <div
                     aria-hidden="true"
-                    className="h-4 w-4 rounded-full shadow-[0_0_14px_currentColor]"
+                    className="h-4 w-4 rounded-full"
                     style={{
                       backgroundColor: deckColor,
                       color: deckColor,
@@ -547,6 +613,7 @@ export function VirtualDeckHome() {
 }
 
 export function VirtualDeckTouch({ deckId }: { deckId: string }) {
+  const profile = useUserProfile();
   const params = useMemo(() => {
     if (typeof window === "undefined") {
       return new URLSearchParams();
@@ -577,8 +644,13 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   const [decks, setDecks] = useState<VirtualDeck[]>([]);
   const [macros, setMacros] = useState<MacroTemplate[]>([]);
   const [state, setState] = useState<LoadState>("loading");
+  const loggedIn = profile ? isLoggedIn(profile) : false;
 
   const load = useCallback(async () => {
+    if (!loggedIn) {
+      return;
+    }
+
     try {
       const [nextDecks, nextMacros] = await Promise.all([
         apiGet<VirtualDeck[]>("/virtual-decks"),
@@ -591,14 +663,26 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     } catch {
       setState("error");
     }
-  }, []);
+  }, [loggedIn]);
 
   useEffect(() => {
+    if (!loggedIn) {
+      return;
+    }
+
     void load();
     const interval = window.setInterval(load, 3000);
 
     return () => window.clearInterval(interval);
-  }, [load]);
+  }, [load, loggedIn]);
+
+  if (!profile) {
+    return <AuthLoading />;
+  }
+
+  if (!loggedIn) {
+    return <LoginRequired />;
+  }
 
   const deck = decks.find((item) => item.id === deckId);
   const rows = deck?.rows ?? fallbackRows;
@@ -650,7 +734,7 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
             <ArrowLeft className="size-8" aria-hidden="true" />
           </a>
 
-          <div className="pointer-events-none absolute right-3 top-3 z-20 flex size-10 items-center justify-center rounded-md  text-[#9fb0bf] shadow-[0_10px_30px_rgba(0,0,0,0.28)] backdrop-blur sm:right-5 sm:top-5">
+          <div className="pointer-events-none absolute right-3 top-3 z-20 flex size-10 items-center justify-center text-[#9fb0bf] sm:right-5 sm:top-5">
             {state === "loading" ? (
               <LoaderCircle
                 className="size-5 animate-spin text-[#00b4ff]"
@@ -663,7 +747,7 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
             )}
           </div>
 
-          <div className="flex flex-1 items-center justify-center overflow-hidden rounded-md p-2 [container-type:size] sm:p-3">
+          <div className="flex flex-1 items-center justify-center overflow-hidden rounded-md p-2 @container-size sm:p-3">
             <div className="grid place-content-center" style={gridStyle}>
               {cells.map((cell) => {
                 const macro = deckMacros.find(

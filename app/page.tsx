@@ -201,7 +201,7 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="rounded-[2rem] bg-[#181E23] p-4">
+            <div className="rounded-4xl bg-[#181E23] p-4">
               <div className="mb-4 flex items-center justify-between border-b border-[#34373a] pb-4">
                 <div>
                   <div className="text-[10px] font-black uppercase tracking-[0.24em] text-[#0177a9]">
