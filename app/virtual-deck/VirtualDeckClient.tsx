@@ -3,13 +3,16 @@
 import {
   ArrowLeft,
   Bell,
+  ChevronLeft,
+  ChevronRight,
   CircleHelp,
   LoaderCircle,
   LogOut,
   RadioTower,
+  Volume2,
   WifiOff,
 } from "lucide-react";
-import type { CSSProperties, ReactNode, SVGProps } from "react";
+import type { CSSProperties, FormEvent, ReactNode, SVGProps } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { renderDeckIcon } from "./deckIconCatalog";
 
@@ -19,6 +22,20 @@ type VirtualDeck = {
   rows: number;
   columns: number;
   color?: string;
+  pageCount?: number;
+  volumeControllers?: VolumeController[] | null;
+};
+
+type VolumeController = {
+  id: string;
+  name: string;
+  inputName: string;
+  orientation: "horizontal" | "vertical";
+  position?: "top" | "right" | "bottom" | "left" | string;
+  page?: number;
+  row: number;
+  column: number;
+  volume: number;
 };
 
 type MacroTemplate = {
@@ -37,6 +54,15 @@ type MacroTemplate = {
   deckVisualType?: "icon" | "image";
   deckIcon?: string;
   deckStateActive?: boolean;
+  page?: number;
+  pageIndex?: number;
+  pageNumber?: number;
+  deckPage?: number;
+};
+
+type ObsSnapshot = {
+  connected: boolean;
+  currentProgramSceneName?: string;
 };
 
 type LoadState = "loading" | "ready" | "error";
@@ -66,6 +92,16 @@ const USER_PARAM_KEYS = [
   "userPhoto",
   "avatar",
 ];
+const USER_STORAGE_KEY = "textream:virtual-deck-user";
+
+function getEmptyUserProfile(): UserProfile {
+  return {
+    id: "",
+    displayName: "",
+    email: "",
+    photoUrl: "",
+  };
+}
 
 function IconBase({
   size = 16,
@@ -175,7 +211,6 @@ function getBackendUrl() {
     params.get("host") ||
     params.get("backendHost") ||
     window.localStorage.getItem("textream:virtual-deck-host") ||
-    window.location.hostname ||
     "127.0.0.1";
   const port = params.get("port") || params.get("backendPort") || "3434";
 
@@ -212,6 +247,7 @@ function buildDeckHref(deck: VirtualDeck) {
 
   url.searchParams.set("rows", String(deck.rows));
   url.searchParams.set("columns", String(deck.columns));
+  url.searchParams.set("pageCount", String(getDeckPageCount(deck)));
 
   const color = normalizeDeckColor(deck.color);
 
@@ -224,12 +260,7 @@ function buildDeckHref(deck: VirtualDeck) {
 
 function getUserProfileFromUrl() {
   if (typeof window === "undefined") {
-    return {
-      id: "",
-      displayName: "",
-      email: "",
-      photoUrl: "",
-    };
+    return getEmptyUserProfile();
   }
 
   const params = new URLSearchParams(window.location.search);
@@ -252,45 +283,48 @@ function getUserProfileFromUrl() {
   };
 
   if (isLoggedIn(profile)) {
-    window.localStorage.setItem(
-      "textream:virtual-deck-user",
-      JSON.stringify(profile)
-    );
+    saveUserProfile(profile);
 
     return profile;
   }
 
   try {
-    const cachedProfile = window.localStorage.getItem("textream:virtual-deck-user");
+    const cachedProfile = window.localStorage.getItem(USER_STORAGE_KEY);
 
     if (cachedProfile) {
       return {
-        id: "",
-        displayName: "",
-        email: "",
-        photoUrl: "",
+        ...getEmptyUserProfile(),
         ...JSON.parse(cachedProfile),
       } as UserProfile;
     }
   } catch {
-    window.localStorage.removeItem("textream:virtual-deck-user");
+    window.localStorage.removeItem(USER_STORAGE_KEY);
   }
 
   return profile;
+}
+
+function saveUserProfile(profile: UserProfile) {
+  window.localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(profile));
 }
 
 function isLoggedIn(profile: UserProfile) {
   return Boolean(profile.id || profile.displayName || profile.email || profile.photoUrl);
 }
 
-function useUserProfile() {
+function useSyncedUserProfile() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
   useEffect(() => {
     setProfile(getUserProfileFromUrl());
   }, []);
 
-  return profile;
+  const syncProfile = useCallback((nextProfile: UserProfile) => {
+    saveUserProfile(nextProfile);
+    setProfile(nextProfile);
+  }, []);
+
+  return [profile, syncProfile] as const;
 }
 
 function getUserInitial(profile: UserProfile) {
@@ -310,6 +344,101 @@ function getDeckMacros(macros: MacroTemplate[], deckId: string) {
   return macros.filter(
     (macro) => (macro.origin ?? "macros") === "deck" && macro.deviceId === deckId
   );
+}
+
+function getDeckPageCount(deck?: VirtualDeck, fallbackPageCount = 1) {
+  return Math.max(1, Math.min(20, Number(deck?.pageCount) || fallbackPageCount));
+}
+
+function getMacroPage(macro: MacroTemplate) {
+  if (typeof macro.pageIndex === "number" && Number.isFinite(macro.pageIndex)) {
+    return Math.max(1, macro.pageIndex + 1);
+  }
+
+  const page = macro.page ?? macro.pageNumber ?? macro.deckPage;
+
+  if (typeof page === "number" && Number.isFinite(page)) {
+    return Math.max(1, page);
+  }
+
+  return 1;
+}
+
+function getVolumeControllerPage(controller: VolumeController) {
+  return Math.max(1, Number(controller.page) || 1);
+}
+
+function getVolumeControllerCell(controller: VolumeController, rows: number, columns: number) {
+  const position = controller.position?.toLowerCase();
+  let row = Math.min(rows, Math.max(1, Number(controller.row) || 1));
+  let column = Math.min(columns, Math.max(1, Number(controller.column) || 1));
+
+  if (controller.orientation === "vertical") {
+    if (position === "left") {
+      column = 1;
+    }
+
+    if (position === "right") {
+      column = columns;
+    }
+  }
+
+  if (controller.orientation === "horizontal") {
+    if (position === "top") {
+      row = 1;
+    }
+
+    if (position === "bottom") {
+      row = rows;
+    }
+  }
+
+  return { row, column };
+}
+
+function getVolumeControllerSide(controller: VolumeController) {
+  const position = controller.position?.toLowerCase();
+
+  if (controller.orientation === "vertical") {
+    return position === "left" ? "left" : "right";
+  }
+
+  return position === "top" ? "top" : "bottom";
+}
+
+function clampVolume(volume: number) {
+  return Math.min(100, Math.max(0, Math.round(volume)));
+}
+
+async function setVolumeControllerVolume(
+  controller: VolumeController,
+  volume: number
+) {
+  const payload = JSON.stringify({
+    volume,
+    inputName: controller.inputName,
+  });
+  const requests = [{ method: "POST", path: "/obs/audio-volume" }];
+
+  for (const request of requests) {
+    try {
+      const response = await fetch(`${getBackendUrl()}${request.path}`, {
+        body: payload,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: request.method,
+      });
+
+      if (response.ok) {
+        return;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  console.warn("Nao foi possivel ajustar o volume.");
 }
 
 function getActionLabel(macro?: MacroTemplate) {
@@ -336,6 +465,15 @@ function getActionLabel(macro?: MacroTemplate) {
   return macro.name?.trim() || "Macro";
 }
 
+function isActiveSceneMacro(macro: MacroTemplate | undefined, activeSceneName: string) {
+  return Boolean(
+    macro?.actionType === "obs-scene" &&
+      macro.obsSceneName?.trim() &&
+      activeSceneName.trim() &&
+      macro.obsSceneName.trim().toLowerCase() === activeSceneName.trim().toLowerCase()
+  );
+}
+
 function getImageSrc(macro?: MacroTemplate) {
   if (!macro || macro.deckVisualType !== "image") {
     return "";
@@ -356,6 +494,91 @@ function DeckIcon({ macro }: { macro?: MacroTemplate }) {
   return renderDeckIcon(macro?.deckIcon, macro?.actionType, {
     className: "size-14 sm:size-16",
   });
+}
+
+function VolumeControllerTile({
+  className = "",
+  controller,
+  onCommit,
+  onVolumeChange,
+  style,
+}: {
+  className?: string;
+  controller: VolumeController;
+  onCommit: (controller: VolumeController, volume: number) => void;
+  onVolumeChange: (controllerId: string, volume: number) => void;
+  style?: CSSProperties;
+}) {
+  const volume = clampVolume(Number(controller.volume) || 0);
+  const isVertical = controller.orientation === "vertical";
+
+  return (
+    <div
+      className={[
+        "relative flex overflow-hidden rounded-4xl border-2 border-[#3B424C] bg-[#181E23] p-3",
+        isVertical
+          ? "min-h-0 flex-col items-center justify-between"
+          : "min-w-0 items-center gap-4",
+        className,
+      ].join(" ")}
+      onClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+      onTouchEnd={(event) => event.stopPropagation()}
+      style={style}
+    >
+      <div
+        className={[
+          "flex min-w-0 items-center gap-2",
+          isVertical ? "w-full flex-col text-center" : "flex-[0.8]",
+        ].join(" ")}
+      >
+        <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-[#1B242E] text-[#3A93F5]">
+          <Volume2 className="size-6" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-bold text-white">
+            {controller.name || controller.inputName || "Volume"}
+          </div>
+          <div className="mt-1 truncate text-xs font-semibold text-[#8E949C]">
+            {volume}%
+          </div>
+        </div>
+      </div>
+
+      <div
+        className={[
+          "relative flex items-center justify-center",
+          isVertical ? "min-h-0 w-full flex-1 py-5" : "min-w-0 flex-[2.6]",
+        ].join(" ")}
+      >
+        <input
+          aria-label={`Volume ${controller.name || controller.inputName || ""}`.trim()}
+          className={[
+            "virtual-volume-range",
+            isVertical
+              ? "virtual-volume-range-vertical absolute"
+              : "virtual-volume-range-horizontal w-full",
+          ].join(" ")}
+          max={100}
+          min={0}
+          onChange={(event) =>
+            onVolumeChange(controller.id, clampVolume(Number(event.target.value)))
+          }
+          onKeyUp={(event) =>
+            onCommit(controller, clampVolume(Number(event.currentTarget.value)))
+          }
+          onPointerUp={(event) =>
+            onCommit(controller, clampVolume(Number(event.currentTarget.value)))
+          }
+          onTouchEnd={(event) =>
+            onCommit(controller, clampVolume(Number(event.currentTarget.value)))
+          }
+          type="range"
+          value={volume}
+        />
+      </div>
+    </div>
+  );
 }
 
 function UserAvatar({ profile }: { profile: UserProfile }) {
@@ -383,18 +606,103 @@ function UserAvatar({ profile }: { profile: UserProfile }) {
   );
 }
 
-function LoginRequired() {
+function LoginRequired({
+  onLogin,
+  onRetry,
+  retrying,
+}: {
+  onLogin: (profile: UserProfile) => void;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
+  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
+  const [host, setHost] = useState(() => {
+    if (typeof window === "undefined") {
+      return "";
+    }
+
+    return (
+      window.localStorage.getItem("textream:virtual-deck-host") ||
+      "127.0.0.1"
+    );
+  });
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const name = displayName.trim();
+    const userEmail = email.trim();
+    const nextHost = host.trim();
+
+    if (!name && !userEmail) {
+      return;
+    }
+
+    if (nextHost) {
+      window.localStorage.setItem("textream:virtual-deck-host", nextHost);
+    }
+
+    onLogin({
+      id: userEmail || name,
+      displayName: name,
+      email: userEmail,
+      photoUrl: "",
+    });
+  }
+
   return (
     <main className="flex min-h-dvh items-center justify-center bg-[#12161C] p-5 text-white">
-      <div className="w-full max-w-md rounded-2xl bg-[#181E24] p-6 text-center">
+      <div className="w-full max-w-md rounded-2xl bg-[#181E24] p-6">
         <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-2xl bg-[#1B242E] text-[#55A8FF]">
           <TextreamLogoIcon size={36} />
         </div>
-        <h1 className="text-xl font-bold">Login necessario</h1>
-        <p className="mt-3 text-sm leading-6 text-slate-400">
-          Abra o deck virtual pelo app desktop do Textream para sincronizar sua
-          conta e acessar os controles.
+        <h1 className="text-center text-xl font-bold">Login necessario</h1>
+        <p className="mt-3 text-center text-sm leading-6 text-slate-400">
+          Nao consegui confirmar automaticamente a sessao do app desktop.
         </p>
+
+        <button
+          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-[#19273A] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#223754] disabled:cursor-not-allowed disabled:opacity-70"
+          disabled={retrying}
+          onClick={onRetry}
+          type="button"
+        >
+          {retrying && (
+            <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+          )}
+          Sincronizar com app desktop
+        </button>
+
+        <form className="mt-5 grid gap-3" onSubmit={handleSubmit}>
+          <input
+            className="h-12 rounded-xl border border-white/10 bg-[#12161C] px-4 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-[#3987DB]"
+            onChange={(event) => setDisplayName(event.target.value)}
+            placeholder="Nome"
+            type="text"
+            value={displayName}
+          />
+          <input
+            className="h-12 rounded-xl border border-white/10 bg-[#12161C] px-4 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-[#3987DB]"
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="Email"
+            type="email"
+            value={email}
+          />
+          <input
+            className="h-12 rounded-xl border border-white/10 bg-[#12161C] px-4 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-[#3987DB]"
+            onChange={(event) => setHost(event.target.value)}
+            placeholder="Host do app desktop"
+            type="text"
+            value={host}
+          />
+          <button
+            className="h-12 rounded-xl bg-[#0177a9] px-4 text-sm font-bold text-white transition hover:bg-[#018dc8]"
+            type="submit"
+          >
+            Entrar manualmente
+          </button>
+        </form>
       </div>
     </main>
   );
@@ -498,17 +806,14 @@ function Shell({
 }
 
 export function VirtualDeckHome() {
-  const profile = useUserProfile();
+  const [profile, syncProfile] = useSyncedUserProfile();
   const [decks, setDecks] = useState<VirtualDeck[]>([]);
   const [macros, setMacros] = useState<MacroTemplate[]>([]);
   const [state, setState] = useState<LoadState>("loading");
+  const [hasCheckedDesktopSession, setHasCheckedDesktopSession] = useState(false);
   const loggedIn = profile ? isLoggedIn(profile) : false;
 
   const load = useCallback(async () => {
-    if (!loggedIn) {
-      return;
-    }
-
     try {
       setState((current) => (current === "ready" ? current : "loading"));
       const [nextDecks, nextMacros] = await Promise.all([
@@ -518,14 +823,26 @@ export function VirtualDeckHome() {
 
       setDecks(nextDecks);
       setMacros(nextMacros);
+      setHasCheckedDesktopSession(true);
+
+      if (!loggedIn) {
+        syncProfile({
+          id: "desktop-session",
+          displayName: "Textream Desktop",
+          email: "",
+          photoUrl: "",
+        });
+      }
+
       setState("ready");
     } catch {
+      setHasCheckedDesktopSession(true);
       setState("error");
     }
-  }, [loggedIn]);
+  }, [loggedIn, syncProfile]);
 
   useEffect(() => {
-    if (!loggedIn) {
+    if (!profile) {
       return;
     }
 
@@ -533,14 +850,33 @@ export function VirtualDeckHome() {
     const interval = window.setInterval(load, 5000);
 
     return () => window.clearInterval(interval);
-  }, [load, loggedIn]);
+  }, [load, profile]);
 
-  if (!profile) {
+  const handleManualLogin = useCallback(
+    (nextProfile: UserProfile) => {
+      syncProfile(nextProfile);
+      setState("loading");
+      setHasCheckedDesktopSession(false);
+    },
+    [syncProfile]
+  );
+
+  if (!profile || (!loggedIn && !hasCheckedDesktopSession)) {
     return <AuthLoading />;
   }
 
   if (!loggedIn) {
-    return <LoginRequired />;
+    return (
+      <LoginRequired
+        onLogin={handleManualLogin}
+        onRetry={() => {
+          setState("loading");
+          setHasCheckedDesktopSession(false);
+          void load();
+        }}
+        retrying={state === "loading"}
+      />
+    );
   }
 
   return (
@@ -613,7 +949,7 @@ export function VirtualDeckHome() {
 }
 
 export function VirtualDeckTouch({ deckId }: { deckId: string }) {
-  const profile = useUserProfile();
+  const [profile, syncProfile] = useSyncedUserProfile();
   const params = useMemo(() => {
     if (typeof window === "undefined") {
       return new URLSearchParams();
@@ -641,32 +977,55 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     8,
     Math.max(1, Number(params.get("columns")) || 4)
   );
+  const fallbackPageCount = Math.min(
+    20,
+    Math.max(1, Number(params.get("pageCount")) || 1)
+  );
   const [decks, setDecks] = useState<VirtualDeck[]>([]);
   const [macros, setMacros] = useState<MacroTemplate[]>([]);
+  const [obsSnapshot, setObsSnapshot] = useState<ObsSnapshot | null>(null);
   const [state, setState] = useState<LoadState>("loading");
+  const [hasCheckedDesktopSession, setHasCheckedDesktopSession] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [touchStartX, setTouchStartX] = useState<number | null>(null);
   const loggedIn = profile ? isLoggedIn(profile) : false;
+  const deck = decks.find((item) => item.id === deckId);
+  const rows = deck?.rows ?? fallbackRows;
+  const columns = deck?.columns ?? fallbackColumns;
+  const pageCount = getDeckPageCount(deck, fallbackPageCount);
+  const hasMultiplePages = pageCount > 1;
 
   const load = useCallback(async () => {
-    if (!loggedIn) {
-      return;
-    }
-
     try {
-      const [nextDecks, nextMacros] = await Promise.all([
+      const [nextDecks, nextMacros, nextObsSnapshot] = await Promise.all([
         apiGet<VirtualDeck[]>("/virtual-decks"),
         apiGet<MacroTemplate[]>("/macros"),
+        apiGet<ObsSnapshot>("/obs/snapshot").catch(() => null),
       ]);
 
       setDecks(nextDecks);
       setMacros(nextMacros);
+      setObsSnapshot(nextObsSnapshot);
+      setHasCheckedDesktopSession(true);
+
+      if (!loggedIn) {
+        syncProfile({
+          id: "desktop-session",
+          displayName: "Textream Desktop",
+          email: "",
+          photoUrl: "",
+        });
+      }
+
       setState("ready");
     } catch {
+      setHasCheckedDesktopSession(true);
       setState("error");
     }
-  }, [loggedIn]);
+  }, [loggedIn, syncProfile]);
 
   useEffect(() => {
-    if (!loggedIn) {
+    if (!profile) {
       return;
     }
 
@@ -674,20 +1033,58 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     const interval = window.setInterval(load, 3000);
 
     return () => window.clearInterval(interval);
-  }, [load, loggedIn]);
+  }, [load, profile]);
 
-  if (!profile) {
+  const handleManualLogin = useCallback(
+    (nextProfile: UserProfile) => {
+      syncProfile(nextProfile);
+      setState("loading");
+      setHasCheckedDesktopSession(false);
+    },
+    [syncProfile]
+  );
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(pageCount, Math.max(1, page)));
+  }, [pageCount]);
+
+  if (!profile || (!loggedIn && !hasCheckedDesktopSession)) {
     return <AuthLoading />;
   }
 
   if (!loggedIn) {
-    return <LoginRequired />;
+    return (
+      <LoginRequired
+        onLogin={handleManualLogin}
+        onRetry={() => {
+          setState("loading");
+          setHasCheckedDesktopSession(false);
+          void load();
+        }}
+        retrying={state === "loading"}
+      />
+    );
   }
 
-  const deck = decks.find((item) => item.id === deckId);
-  const rows = deck?.rows ?? fallbackRows;
-  const columns = deck?.columns ?? fallbackColumns;
-  const deckMacros = getDeckMacros(macros, deckId);
+  const deckMacros = getDeckMacros(macros, deckId).filter(
+    (macro) => getMacroPage(macro) === currentPage
+  );
+  const volumeControllers = (deck?.volumeControllers ?? []).filter(
+    (controller) => getVolumeControllerPage(controller) === currentPage
+  );
+  const activeSceneName = obsSnapshot?.currentProgramSceneName ?? "";
+  const topVolumeControllers = volumeControllers.filter(
+    (controller) => getVolumeControllerSide(controller) === "top"
+  );
+  const rightVolumeControllers = volumeControllers.filter(
+    (controller) => getVolumeControllerSide(controller) === "right"
+  );
+  const bottomVolumeControllers = volumeControllers.filter(
+    (controller) => getVolumeControllerSide(controller) === "bottom"
+  );
+  const leftVolumeControllers = volumeControllers.filter(
+    (controller) => getVolumeControllerSide(controller) === "left"
+  );
   const cells = Array.from({ length: rows * columns }, (_, index) => {
     const row = Math.floor(index / columns) + 1;
     const column = (index % columns) + 1;
@@ -695,19 +1092,47 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     return {
       key: `cell-${row}-${column}`,
       label: `${index + 1}`,
+      row,
+      column,
     };
   });
   const largestAxis = Math.max(rows, columns);
   const gapReduction = (Math.max(0, largestAxis - 3) * 0.18).toFixed(2);
+  const sideControlCount =
+    leftVolumeControllers.length + rightVolumeControllers.length;
+  const sideControlGapCount =
+    Math.max(0, leftVolumeControllers.length - 1) +
+    Math.max(0, rightVolumeControllers.length - 1) +
+    (leftVolumeControllers.length ? 1 : 0) +
+    (rightVolumeControllers.length ? 1 : 0);
+  const stackedControlCount =
+    topVolumeControllers.length + bottomVolumeControllers.length;
+  const stackedControlGapCount =
+    Math.max(0, topVolumeControllers.length - 1) +
+    Math.max(0, bottomVolumeControllers.length - 1) +
+    (topVolumeControllers.length ? 1 : 0) +
+    (bottomVolumeControllers.length ? 1 : 0);
   const gridStyle = {
     "--deck-columns": columns,
     "--deck-rows": rows,
     "--deck-gap": `clamp(0.45rem, calc(2rem - ${gapReduction}rem), 2rem)`,
+    "--volume-control-size": "clamp(7rem, 16cqw, 11rem)",
+    "--deck-side-control-count": sideControlCount,
+    "--deck-side-control-gap-count": sideControlGapCount,
+    "--deck-stacked-control-count": stackedControlCount,
+    "--deck-stacked-control-gap-count": stackedControlGapCount,
     "--deck-cell-size":
-      "min(calc((100cqw - (var(--deck-columns) - 1) * var(--deck-gap)) / var(--deck-columns)), calc((100cqh - (var(--deck-rows) - 1) * var(--deck-gap)) / var(--deck-rows)))",
+      "min(calc((100cqw - var(--deck-side-control-count) * var(--volume-control-size) - var(--deck-side-control-gap-count) * var(--deck-gap) - (var(--deck-columns) - 1) * var(--deck-gap)) / var(--deck-columns)), calc((100cqh - var(--deck-stacked-control-count) * var(--volume-control-size) - var(--deck-stacked-control-gap-count) * var(--deck-gap) - (var(--deck-rows) - 1) * var(--deck-gap)) / var(--deck-rows)))",
     gap: "var(--deck-gap)",
     gridTemplateColumns: `repeat(${columns}, var(--deck-cell-size))`,
     gridTemplateRows: `repeat(${rows}, var(--deck-cell-size))`,
+  } as CSSProperties & Record<string, string | number>;
+  const deckFrameStyle = {
+    ...gridStyle,
+    "--deck-grid-width":
+      "calc(var(--deck-columns) * var(--deck-cell-size) + (var(--deck-columns) - 1) * var(--deck-gap))",
+    "--deck-grid-height":
+      "calc(var(--deck-rows) * var(--deck-cell-size) + (var(--deck-rows) - 1) * var(--deck-gap))",
   } as CSSProperties & Record<string, string | number>;
 
   async function runMacro(macroId: string) {
@@ -721,10 +1146,82 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     }
   }
 
+  function updateVolumeController(controllerId: string, volume: number) {
+    setDecks((currentDecks) =>
+      currentDecks.map((currentDeck) => {
+        if (currentDeck.id !== deckId) {
+          return currentDeck;
+        }
+
+        return {
+          ...currentDeck,
+          volumeControllers: (currentDeck.volumeControllers ?? []).map(
+            (controller) =>
+              controller.id === controllerId
+                ? {
+                    ...controller,
+                    volume,
+                  }
+                : controller
+          ),
+        };
+      })
+    );
+  }
+
+  async function commitVolumeController(
+    controller: VolumeController,
+    volume: number
+  ) {
+    try {
+      updateVolumeController(controller.id, volume);
+      await setVolumeControllerVolume(controller, volume);
+      void load();
+    } catch (error) {
+      console.error("Erro ao ajustar volume virtual:", error);
+    }
+  }
+
+  function goToPreviousPage() {
+    setCurrentPage((page) => (page <= 1 ? pageCount : page - 1));
+  }
+
+  function goToNextPage() {
+    setCurrentPage((page) => (page >= pageCount ? 1 : page + 1));
+  }
+
+  function handleTouchEnd(touchEndX: number) {
+    if (!hasMultiplePages || touchStartX === null) {
+      setTouchStartX(null);
+      return;
+    }
+
+    const distance = touchStartX - touchEndX;
+    const swipeThreshold = 48;
+
+    if (Math.abs(distance) >= swipeThreshold) {
+      if (distance > 0) {
+        goToNextPage();
+      } else {
+        goToPreviousPage();
+      }
+    }
+
+    setTouchStartX(null);
+  }
+
   return (
     <main className="h-dvh overflow-hidden bg-[#12161C] text-white">
       <div className="flex h-full">
-        <section className="relative flex min-w-0 flex-1 flex-col p-2 sm:p-4">
+        <section
+          className="relative flex min-w-0 flex-1 flex-col p-2 sm:p-4"
+          onTouchEnd={(event) => handleTouchEnd(event.changedTouches[0]?.clientX ?? 0)}
+          onTouchStart={(event) => {
+            if (hasMultiplePages) {
+              setTouchStartX(event.touches[0]?.clientX ?? null);
+            }
+          }}
+        >
           <a
             aria-label="Voltar para decks virtuais"
             className="absolute  left-3 top-3 z-20 flex size-10 items-center justify-center  text-[#00b4ff] transition sm:left-5 sm:top-5"
@@ -747,48 +1244,179 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
             )}
           </div>
 
-          <div className="flex flex-1 items-center justify-center overflow-hidden rounded-md p-2 @container-size sm:p-3">
-            <div className="grid place-content-center" style={gridStyle}>
-              {cells.map((cell) => {
-                const macro = deckMacros.find(
-                  (item) => item.key.toLowerCase() === cell.key.toLowerCase()
-                );
-                const imageSrc = getImageSrc(macro);
+          {hasMultiplePages && (
+            <>
+              <button
+                aria-label="Pagina anterior"
+                className="absolute left-3 top-1/2 z-20 flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-[#181E24]/90 text-[#00b4ff] shadow-[0_12px_30px_rgba(0,0,0,0.3)] backdrop-blur transition active:scale-95 sm:left-5"
+                onClick={goToPreviousPage}
+                type="button"
+              >
+                <ChevronLeft className="size-7" aria-hidden="true" />
+              </button>
+              <button
+                aria-label="Proxima pagina"
+                className="absolute right-3 top-1/2 z-20 flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-[#181E24]/90 text-[#00b4ff] shadow-[0_12px_30px_rgba(0,0,0,0.3)] backdrop-blur transition active:scale-95 sm:right-5"
+                onClick={goToNextPage}
+                type="button"
+              >
+                <ChevronRight className="size-7" aria-hidden="true" />
+              </button>
+            </>
+          )}
+
+          <div className="flex flex-1 items-center justify-center overflow-hidden rounded-md p-2 pb-8 @container-size sm:p-3 sm:pb-9">
+            <div
+              className="flex flex-col items-center justify-center gap-[var(--deck-gap)]"
+              style={deckFrameStyle}
+            >
+              {topVolumeControllers.length > 0 && (
+                <div
+                  className="grid gap-[var(--deck-gap)]"
+                  style={{ width: "var(--deck-grid-width)" }}
+                >
+                  {topVolumeControllers.map((controller) => (
+                    <VolumeControllerTile
+                      key={controller.id}
+                      className="h-[var(--volume-control-size)] w-full"
+                      controller={controller}
+                      onCommit={(nextController, volume) =>
+                        void commitVolumeController(nextController, volume)
+                      }
+                      onVolumeChange={updateVolumeController}
+                    />
+                  ))}
+                </div>
+              )}
+
+              <div className="flex items-center justify-center gap-[var(--deck-gap)]">
+                {leftVolumeControllers.length > 0 && (
+                  <div className="flex h-[var(--deck-grid-height)] gap-[var(--deck-gap)]">
+                    {leftVolumeControllers.map((controller) => (
+                      <VolumeControllerTile
+                        key={controller.id}
+                        className="h-full w-[var(--volume-control-size)]"
+                        controller={controller}
+                        onCommit={(nextController, volume) =>
+                          void commitVolumeController(nextController, volume)
+                        }
+                        onVolumeChange={updateVolumeController}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                <div className="grid place-content-center" style={gridStyle}>
+                  {cells.map((cell) => {
+                    const macro = deckMacros.find(
+                      (item) => item.key.toLowerCase() === cell.key.toLowerCase()
+                    );
+                    const imageSrc = getImageSrc(macro);
+                    const isActiveScene = isActiveSceneMacro(macro, activeSceneName);
+
+                    return (
+                      <button
+                        key={cell.key}
+                        aria-disabled={!macro}
+                        className={[
+                          "group relative flex size-full aspect-square touch-manipulation flex-col items-center justify-center gap-3 overflow-hidden rounded-4xl border-2 bg-[#181E23] p-3 text-center transition",
+                          isActiveScene
+                            ? "border-[#00b4ff] shadow-[0_0_0_2px_rgba(0,180,255,0.28),0_0_28px_rgba(0,180,255,0.18)]"
+                            : "border-[#3B424C]",
+                        ].join(" ")}
+                        onClick={macro ? () => void runMacro(macro.id) : undefined}
+                        type="button"
+                      >
+                        {imageSrc && macro ? (
+                          <img
+                            alt=""
+                            className={[
+                              "absolute inset-0 size-full object-cover",
+                              macro.deckStateActive
+                                ? "grayscale-0"
+                                : "grayscale brightness-50",
+                            ].join(" ")}
+                            src={imageSrc}
+                          />
+                        ) : (
+                          <div className="relative z-10 flex items-center justify-center text-[#3A93F5]">
+                            <DeckIcon macro={macro} />
+                          </div>
+                        )}
+                        <div className="relative z-10 min-w-0 max-w-full">
+                          <div className="max-w-full truncate text-base font-bold leading-tight sm:text-xl">
+                            {getActionLabel(macro)}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {rightVolumeControllers.length > 0 && (
+                  <div className="flex h-[var(--deck-grid-height)] gap-[var(--deck-gap)]">
+                    {rightVolumeControllers.map((controller) => (
+                      <VolumeControllerTile
+                        key={controller.id}
+                        className="h-full w-[var(--volume-control-size)]"
+                        controller={controller}
+                        onCommit={(nextController, volume) =>
+                          void commitVolumeController(nextController, volume)
+                        }
+                        onVolumeChange={updateVolumeController}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {bottomVolumeControllers.length > 0 && (
+                <div
+                  className="grid gap-[var(--deck-gap)]"
+                  style={{ width: "var(--deck-grid-width)" }}
+                >
+                  {bottomVolumeControllers.map((controller) => (
+                    <VolumeControllerTile
+                      key={controller.id}
+                      className="h-[var(--volume-control-size)] w-full"
+                      controller={controller}
+                      onCommit={(nextController, volume) =>
+                        void commitVolumeController(nextController, volume)
+                      }
+                      onVolumeChange={updateVolumeController}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {hasMultiplePages && (
+            <div
+              aria-label={`Pagina ${currentPage} de ${pageCount}`}
+              className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-[#181E24]/85 px-3 py-2 backdrop-blur sm:bottom-4"
+            >
+              {Array.from({ length: pageCount }, (_, index) => {
+                const page = index + 1;
 
                 return (
                   <button
-                    key={cell.key}
-                    aria-disabled={!macro}
-                    className="group relative flex size-full aspect-square touch-manipulation flex-col items-center justify-center gap-3 overflow-hidden rounded-xl border-2 border-[#3B424C] bg-[#181E23] p-3 text-center"
-                    onClick={macro ? () => void runMacro(macro.id) : undefined}
+                    key={page}
+                    aria-label={`Ir para pagina ${page}`}
+                    aria-current={page === currentPage ? "page" : undefined}
+                    className={[
+                      "size-2.5 rounded-full transition",
+                      page === currentPage
+                        ? "bg-[#00b4ff]"
+                        : "bg-white/25 active:bg-white/50",
+                    ].join(" ")}
+                    onClick={() => setCurrentPage(page)}
                     type="button"
-                  >
-                    {imageSrc && macro ? (
-                      <img
-                        alt=""
-                        className={[
-                          "absolute inset-0 size-full object-cover",
-                          macro.deckStateActive
-                            ? "grayscale-0"
-                            : "grayscale brightness-50",
-                        ].join(" ")}
-                        src={imageSrc}
-                      />
-                    ) : (
-                      <div className="relative z-10 flex items-center justify-center text-[#3A93F5]">
-                        <DeckIcon macro={macro} />
-                      </div>
-                    )}
-                    <div className="relative z-10 min-w-0 max-w-full">
-                      <div className="max-w-full truncate text-base font-bold leading-tight sm:text-xl">
-                        {getActionLabel(macro)}
-                      </div>
-                    </div>
-                  </button>
+                  />
                 );
               })}
             </div>
-          </div>
+          )}
         </section>
       </div>
     </main>

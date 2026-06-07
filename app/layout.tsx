@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Comfortaa } from "next/font/google";
 import "./globals.css";
 
@@ -9,8 +9,35 @@ const comfortaa = Comfortaa({
 });
 
 export const metadata: Metadata = {
-  title: "Texstream",
-  description: "Webapp do Texstream com deck virtual.",
+  title: {
+    default: "Textream",
+    template: "%s | Textream",
+  },
+  description: "Webapp do Textream com deck virtual.",
+  applicationName: "Textream",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Textream",
+  },
+  formatDetection: {
+    telephone: false,
+  },
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: "/icon.svg",
+    apple: "/apple-icon.svg",
+  },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  minimumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
+  themeColor: "#12161C",
 };
 
 export default function RootLayout({
