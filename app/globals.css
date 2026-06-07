@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  --background: #020617;
+  --background: #090b0f;
   --foreground: #f8fafc;
 }
 
@@ -19,7 +19,7 @@ body {
   margin: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-comfortaa), ui-sans-serif, system-ui, sans-serif;
 }
 
 button,
@@ -27,4 +27,52 @@ input,
 textarea,
 select {
   font: inherit;
+}
+
+@keyframes card-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes deck-pulse {
+  0%,
+  100% {
+    transform: translateY(0);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  50% {
+    transform: translateY(-3px);
+    border-color: rgba(34, 211, 238, 0.38);
+  }
+}
+
+.animated-card {
+  animation: card-rise 720ms ease both;
+}
+
+.deck-button {
+  animation: card-rise 680ms ease both, deck-pulse 5.8s ease-in-out infinite;
+}
+
+.deck-button:nth-child(2n) {
+  animation-duration: 680ms, 5.4s;
+}
+
+.deck-button:nth-child(3n) {
+  animation-duration: 680ms, 5.9s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animated-card,
+  .deck-button {
+    animation: none;
+  }
 }

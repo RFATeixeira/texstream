@@ -1,5 +1,12 @@
 import type { Metadata } from "next";
+import { Comfortaa } from "next/font/google";
 import "./globals.css";
+
+const comfortaa = Comfortaa({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-comfortaa",
+});
 
 export const metadata: Metadata = {
   title: "Texstream",
@@ -13,7 +20,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR">
-      <body>{children}</body>
+      <body className={comfortaa.variable}>{children}</body>
     </html>
   );
 }
