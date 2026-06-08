@@ -1,6 +1,13 @@
 "use client";
 
 import {
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+  type User,
+} from "firebase/auth";
+import {
   ArrowLeft,
   Bell,
   ChevronLeft,
@@ -12,8 +19,9 @@ import {
   Volume2,
   WifiOff,
 } from "lucide-react";
-import type { CSSProperties, FormEvent, ReactNode, SVGProps } from "react";
+import type { CSSProperties, ReactNode, SVGProps } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { getFirebaseAuth, isFirebaseConfigured } from "../../lib/firebase";
 import { renderDeckIcon } from "./deckIconCatalog";
 
 type VirtualDeck = {
@@ -258,65 +266,52 @@ function buildDeckHref(deck: VirtualDeck) {
   return url.toString();
 }
 
-function getUserProfileFromUrl() {
-  if (typeof window === "undefined") {
-    return getEmptyUserProfile();
-  }
-
-  const params = new URLSearchParams(window.location.search);
-  const id = params.get("id") || params.get("userId") || params.get("uid") || "";
-  const displayName =
-    params.get("displayName") || params.get("userName") || params.get("name") || "";
-  const email = params.get("email") || params.get("userEmail") || "";
-  const photoUrl =
-    params.get("photoURL") ||
-    params.get("photoUrl") ||
-    params.get("userPhoto") ||
-    params.get("avatar") ||
-    "";
-
-  const profile = {
-    id: id.trim(),
-    displayName: displayName.trim(),
-    email: email.trim(),
-    photoUrl: photoUrl.trim(),
-  };
-
-  if (isLoggedIn(profile)) {
-    saveUserProfile(profile);
-
-    return profile;
-  }
-
-  try {
-    const cachedProfile = window.localStorage.getItem(USER_STORAGE_KEY);
-
-    if (cachedProfile) {
-      return {
-        ...getEmptyUserProfile(),
-        ...JSON.parse(cachedProfile),
-      } as UserProfile;
-    }
-  } catch {
-    window.localStorage.removeItem(USER_STORAGE_KEY);
-  }
-
-  return profile;
-}
-
 function saveUserProfile(profile: UserProfile) {
   window.localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(profile));
+}
+
+function clearUserProfile() {
+  window.localStorage.removeItem(USER_STORAGE_KEY);
 }
 
 function isLoggedIn(profile: UserProfile) {
   return Boolean(profile.id || profile.displayName || profile.email || profile.photoUrl);
 }
 
+function getUserProfileFromFirebaseUser(user: User): UserProfile {
+  return {
+    id: user.uid,
+    displayName: user.displayName ?? "",
+    email: user.email ?? "",
+    photoUrl: user.photoURL ?? "",
+  };
+}
+
 function useSyncedUserProfile() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
   useEffect(() => {
-    setProfile(getUserProfileFromUrl());
+    const auth = getFirebaseAuth();
+
+    if (!auth) {
+      clearUserProfile();
+      setProfile(getEmptyUserProfile());
+      return;
+    }
+
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        const firebaseProfile = getUserProfileFromFirebaseUser(user);
+        saveUserProfile(firebaseProfile);
+        setProfile(firebaseProfile);
+        return;
+      }
+
+      clearUserProfile();
+      setProfile(getEmptyUserProfile());
+    });
+
+    return unsubscribe;
   }, []);
 
   const syncProfile = useCallback((nextProfile: UserProfile) => {
@@ -325,6 +320,33 @@ function useSyncedUserProfile() {
   }, []);
 
   return [profile, syncProfile] as const;
+}
+
+async function signInWithGoogle() {
+  const auth = getFirebaseAuth();
+
+  if (!auth) {
+    throw new Error("Firebase nao configurado.");
+  }
+
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({
+    prompt: "select_account",
+  });
+
+  const result = await signInWithPopup(auth, provider);
+
+  return getUserProfileFromFirebaseUser(result.user);
+}
+
+async function signOutGoogle() {
+  const auth = getFirebaseAuth();
+
+  if (auth) {
+    await signOut(auth);
+  }
+
+  clearUserProfile();
 }
 
 function getUserInitial(profile: UserProfile) {
@@ -607,16 +629,18 @@ function UserAvatar({ profile }: { profile: UserProfile }) {
 }
 
 function LoginRequired({
+  message,
   onLogin,
   onRetry,
   retrying,
+  signingIn,
 }: {
-  onLogin: (profile: UserProfile) => void;
+  message: string;
+  onLogin: () => void;
   onRetry: () => void;
   retrying: boolean;
+  signingIn: boolean;
 }) {
-  const [displayName, setDisplayName] = useState("");
-  const [email, setEmail] = useState("");
   const [host, setHost] = useState(() => {
     if (typeof window === "undefined") {
       return "";
@@ -628,27 +652,14 @@ function LoginRequired({
     );
   });
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const name = displayName.trim();
-    const userEmail = email.trim();
+  function handleRetry() {
     const nextHost = host.trim();
-
-    if (!name && !userEmail) {
-      return;
-    }
 
     if (nextHost) {
       window.localStorage.setItem("textream:virtual-deck-host", nextHost);
     }
 
-    onLogin({
-      id: userEmail || name,
-      displayName: name,
-      email: userEmail,
-      photoUrl: "",
-    });
+    onRetry();
   }
 
   return (
@@ -659,36 +670,38 @@ function LoginRequired({
         </div>
         <h1 className="text-center text-xl font-bold">Login necessario</h1>
         <p className="mt-3 text-center text-sm leading-6 text-slate-400">
-          Nao consegui confirmar automaticamente a sessao do app desktop.
+          Entre com a mesma conta Google usada no Textream Desktop.
         </p>
 
+        {!isFirebaseConfigured && (
+          <div className="mt-5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+            Configure as variaveis NEXT_PUBLIC_FIREBASE_* para ativar o login.
+          </div>
+        )}
+
+        {message && (
+          <div className="mt-5 rounded-xl bg-white/5 px-3 py-2 text-xs text-slate-300">
+            {message}
+          </div>
+        )}
+
         <button
-          className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-[#19273A] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#223754] disabled:cursor-not-allowed disabled:opacity-70"
-          disabled={retrying}
-          onClick={onRetry}
+          className="mt-6 flex w-full items-center justify-center gap-3 rounded-xl bg-white px-4 py-3 text-sm font-bold text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-70"
+          disabled={!isFirebaseConfigured || signingIn}
+          onClick={onLogin}
           type="button"
         >
-          {retrying && (
+          {signingIn ? (
             <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <span className="flex size-5 items-center justify-center rounded-full bg-slate-950 text-xs font-bold text-white">
+              G
+            </span>
           )}
-          Sincronizar com app desktop
+          {signingIn ? "Aguarde" : "Entrar com Google"}
         </button>
 
-        <form className="mt-5 grid gap-3" onSubmit={handleSubmit}>
-          <input
-            className="h-12 rounded-xl border border-white/10 bg-[#12161C] px-4 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-[#3987DB]"
-            onChange={(event) => setDisplayName(event.target.value)}
-            placeholder="Nome"
-            type="text"
-            value={displayName}
-          />
-          <input
-            className="h-12 rounded-xl border border-white/10 bg-[#12161C] px-4 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-[#3987DB]"
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="Email"
-            type="email"
-            value={email}
-          />
+        <div className="mt-5 grid gap-3">
           <input
             className="h-12 rounded-xl border border-white/10 bg-[#12161C] px-4 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-[#3987DB]"
             onChange={(event) => setHost(event.target.value)}
@@ -697,12 +710,17 @@ function LoginRequired({
             value={host}
           />
           <button
-            className="h-12 rounded-xl bg-[#0177a9] px-4 text-sm font-bold text-white transition hover:bg-[#018dc8]"
-            type="submit"
+            className="flex h-12 items-center justify-center gap-2 rounded-xl bg-[#19273A] px-4 text-sm font-bold text-white transition hover:bg-[#223754] disabled:cursor-not-allowed disabled:opacity-70"
+            disabled={retrying}
+            onClick={handleRetry}
+            type="button"
           >
-            Entrar manualmente
+            {retrying && (
+              <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+            )}
+            Sincronizar host do app desktop
           </button>
-        </form>
+        </div>
       </div>
     </main>
   );
@@ -718,9 +736,11 @@ function AuthLoading() {
 
 function Shell({
   children,
+  onSignOut,
   profile,
 }: {
   children: ReactNode;
+  onSignOut: () => void;
   profile: UserProfile;
 }) {
   return (
@@ -751,6 +771,7 @@ function Shell({
 
             <button
               className="mt-auto flex items-center gap-3 rounded-xl bg-[#381A1B] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#552122] hover:text-white"
+              onClick={onSignOut}
               type="button"
             >
               <LogOut className="size-5 text-[#A31B1B]" aria-hidden="true" />
@@ -810,6 +831,8 @@ export function VirtualDeckHome() {
   const [decks, setDecks] = useState<VirtualDeck[]>([]);
   const [macros, setMacros] = useState<MacroTemplate[]>([]);
   const [state, setState] = useState<LoadState>("loading");
+  const [authMessage, setAuthMessage] = useState("");
+  const [authState, setAuthState] = useState<"idle" | "signing-in">("idle");
   const [hasCheckedDesktopSession, setHasCheckedDesktopSession] = useState(false);
   const loggedIn = profile ? isLoggedIn(profile) : false;
 
@@ -825,24 +848,15 @@ export function VirtualDeckHome() {
       setMacros(nextMacros);
       setHasCheckedDesktopSession(true);
 
-      if (!loggedIn) {
-        syncProfile({
-          id: "desktop-session",
-          displayName: "Textream Desktop",
-          email: "",
-          photoUrl: "",
-        });
-      }
-
       setState("ready");
     } catch {
       setHasCheckedDesktopSession(true);
       setState("error");
     }
-  }, [loggedIn, syncProfile]);
+  }, []);
 
   useEffect(() => {
-    if (!profile) {
+    if (!profile || !loggedIn) {
       return;
     }
 
@@ -850,37 +864,59 @@ export function VirtualDeckHome() {
     const interval = window.setInterval(load, 5000);
 
     return () => window.clearInterval(interval);
-  }, [load, profile]);
+  }, [load, loggedIn, profile]);
 
-  const handleManualLogin = useCallback(
-    (nextProfile: UserProfile) => {
+  const handleGoogleLogin = useCallback(async () => {
+    if (authState === "signing-in") {
+      return;
+    }
+
+    setAuthState("signing-in");
+    setAuthMessage("");
+
+    try {
+      const nextProfile = await signInWithGoogle();
       syncProfile(nextProfile);
       setState("loading");
       setHasCheckedDesktopSession(false);
-    },
-    [syncProfile]
-  );
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : "Erro ao autenticar.");
+    } finally {
+      setAuthState("idle");
+    }
+  }, [authState, syncProfile]);
 
-  if (!profile || (!loggedIn && !hasCheckedDesktopSession)) {
+  const handleSignOut = useCallback(() => {
+    void signOutGoogle();
+    syncProfile(getEmptyUserProfile());
+    setDecks([]);
+    setMacros([]);
+    setState("loading");
+    setHasCheckedDesktopSession(false);
+  }, [syncProfile]);
+
+  if (!profile) {
     return <AuthLoading />;
   }
 
   if (!loggedIn) {
     return (
       <LoginRequired
-        onLogin={handleManualLogin}
+        message={authMessage}
+        onLogin={handleGoogleLogin}
         onRetry={() => {
           setState("loading");
           setHasCheckedDesktopSession(false);
           void load();
         }}
         retrying={state === "loading"}
+        signingIn={authState === "signing-in"}
       />
     );
   }
 
   return (
-    <Shell profile={profile}>
+    <Shell onSignOut={handleSignOut} profile={profile}>
       <div className="grid flex-1 content-start gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {decks.map((deck) => {
           const configuredKeys = getDeckMacros(macros, deck.id).length;
@@ -985,6 +1021,8 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   const [macros, setMacros] = useState<MacroTemplate[]>([]);
   const [obsSnapshot, setObsSnapshot] = useState<ObsSnapshot | null>(null);
   const [state, setState] = useState<LoadState>("loading");
+  const [authMessage, setAuthMessage] = useState("");
+  const [authState, setAuthState] = useState<"idle" | "signing-in">("idle");
   const [hasCheckedDesktopSession, setHasCheckedDesktopSession] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
@@ -1008,24 +1046,15 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
       setObsSnapshot(nextObsSnapshot);
       setHasCheckedDesktopSession(true);
 
-      if (!loggedIn) {
-        syncProfile({
-          id: "desktop-session",
-          displayName: "Textream Desktop",
-          email: "",
-          photoUrl: "",
-        });
-      }
-
       setState("ready");
     } catch {
       setHasCheckedDesktopSession(true);
       setState("error");
     }
-  }, [loggedIn, syncProfile]);
+  }, []);
 
   useEffect(() => {
-    if (!profile) {
+    if (!profile || !loggedIn) {
       return;
     }
 
@@ -1033,35 +1062,48 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     const interval = window.setInterval(load, 3000);
 
     return () => window.clearInterval(interval);
-  }, [load, profile]);
+  }, [load, loggedIn, profile]);
 
-  const handleManualLogin = useCallback(
-    (nextProfile: UserProfile) => {
+  const handleGoogleLogin = useCallback(async () => {
+    if (authState === "signing-in") {
+      return;
+    }
+
+    setAuthState("signing-in");
+    setAuthMessage("");
+
+    try {
+      const nextProfile = await signInWithGoogle();
       syncProfile(nextProfile);
       setState("loading");
       setHasCheckedDesktopSession(false);
-    },
-    [syncProfile]
-  );
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : "Erro ao autenticar.");
+    } finally {
+      setAuthState("idle");
+    }
+  }, [authState, syncProfile]);
 
   useEffect(() => {
     setCurrentPage((page) => Math.min(pageCount, Math.max(1, page)));
   }, [pageCount]);
 
-  if (!profile || (!loggedIn && !hasCheckedDesktopSession)) {
+  if (!profile) {
     return <AuthLoading />;
   }
 
   if (!loggedIn) {
     return (
       <LoginRequired
-        onLogin={handleManualLogin}
+        message={authMessage}
+        onLogin={handleGoogleLogin}
         onRetry={() => {
           setState("loading");
           setHasCheckedDesktopSession(false);
           void load();
         }}
         retrying={state === "loading"}
+        signingIn={authState === "signing-in"}
       />
     );
   }
