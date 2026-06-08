@@ -1240,6 +1240,21 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     "--deck-grid-height":
       "calc(var(--deck-rows) * var(--deck-cell-size) + (var(--deck-rows) - 1) * var(--deck-gap))",
   } as CSSProperties & Record<string, string | number>;
+  const deckGapStyle = { gap: "var(--deck-gap)" } as CSSProperties;
+  const stackedControlsStyle = {
+    gap: "var(--deck-gap)",
+    width: "var(--deck-grid-width)",
+  } as CSSProperties;
+  const horizontalControlStyle = {
+    height: "var(--volume-control-size)",
+  } as CSSProperties;
+  const sideControlsStyle = {
+    gap: "var(--deck-gap)",
+    height: "var(--deck-grid-height)",
+  } as CSSProperties;
+  const verticalControlStyle = {
+    width: "var(--volume-control-size)",
+  } as CSSProperties;
 
   async function runMacro(macroId: string) {
     try {
@@ -1373,40 +1388,45 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
 
           <div className="flex flex-1 items-center justify-center overflow-hidden rounded-md p-2 pb-8 @container-size sm:p-3 sm:pb-9">
             <div
-              className="flex flex-col items-center justify-center gap-[var(--deck-gap)]"
+              className="flex flex-col items-center justify-center"
               style={deckFrameStyle}
             >
               {topVolumeControllers.length > 0 && (
                 <div
-                  className="grid gap-[var(--deck-gap)]"
-                  style={{ width: "var(--deck-grid-width)" }}
+                  className="grid"
+                  style={stackedControlsStyle}
                 >
                   {topVolumeControllers.map((controller) => (
                     <VolumeControllerTile
                       key={controller.id}
-                      className="h-[var(--volume-control-size)] w-full"
+                      className="w-full"
                       controller={controller}
                       onCommit={(nextController, volume) =>
                         void commitVolumeController(nextController, volume)
                       }
                       onVolumeChange={updateVolumeController}
+                      style={horizontalControlStyle}
                     />
                   ))}
                 </div>
               )}
 
-              <div className="flex items-center justify-center gap-[var(--deck-gap)]">
+              <div
+                className="flex items-center justify-center"
+                style={deckGapStyle}
+              >
                 {leftVolumeControllers.length > 0 && (
-                  <div className="flex h-[var(--deck-grid-height)] gap-[var(--deck-gap)]">
+                  <div className="flex" style={sideControlsStyle}>
                     {leftVolumeControllers.map((controller) => (
                       <VolumeControllerTile
                         key={controller.id}
-                        className="h-full w-[var(--volume-control-size)]"
+                        className="h-full"
                         controller={controller}
                         onCommit={(nextController, volume) =>
                           void commitVolumeController(nextController, volume)
                         }
                         onVolumeChange={updateVolumeController}
+                        style={verticalControlStyle}
                       />
                     ))}
                   </div>
@@ -1460,16 +1480,17 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
                 </div>
 
                 {rightVolumeControllers.length > 0 && (
-                  <div className="flex h-[var(--deck-grid-height)] gap-[var(--deck-gap)]">
+                  <div className="flex" style={sideControlsStyle}>
                     {rightVolumeControllers.map((controller) => (
                       <VolumeControllerTile
                         key={controller.id}
-                        className="h-full w-[var(--volume-control-size)]"
+                        className="h-full"
                         controller={controller}
                         onCommit={(nextController, volume) =>
                           void commitVolumeController(nextController, volume)
                         }
                         onVolumeChange={updateVolumeController}
+                        style={verticalControlStyle}
                       />
                     ))}
                   </div>
@@ -1478,18 +1499,19 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
 
               {bottomVolumeControllers.length > 0 && (
                 <div
-                  className="grid gap-[var(--deck-gap)]"
-                  style={{ width: "var(--deck-grid-width)" }}
+                  className="grid"
+                  style={stackedControlsStyle}
                 >
                   {bottomVolumeControllers.map((controller) => (
                     <VolumeControllerTile
                       key={controller.id}
-                      className="h-[var(--volume-control-size)] w-full"
+                      className="w-full"
                       controller={controller}
                       onCommit={(nextController, volume) =>
                         void commitVolumeController(nextController, volume)
                       }
                       onVolumeChange={updateVolumeController}
+                      style={horizontalControlStyle}
                     />
                   ))}
                 </div>
