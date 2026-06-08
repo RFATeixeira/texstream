@@ -101,6 +101,7 @@ const USER_PARAM_KEYS = [
   "avatar",
 ];
 const USER_STORAGE_KEY = "textream:virtual-deck-user";
+const BACKEND_HOST_STORAGE_KEY = "textream:virtual-deck-host";
 
 function getEmptyUserProfile(): UserProfile {
   return {
@@ -215,20 +216,49 @@ function TextreamLogoIcon({ size = 20, ...props }: IconProps) {
 
 function getBackendUrl() {
   const params = new URLSearchParams(window.location.search);
-  const host =
+  const requestedHost =
     params.get("host") ||
     params.get("backendHost") ||
-    window.localStorage.getItem("textream:virtual-deck-host") ||
+    window.localStorage.getItem(BACKEND_HOST_STORAGE_KEY) ||
     "127.0.0.1";
+  const host = getSafeBackendHost(requestedHost);
   const port = params.get("port") || params.get("backendPort") || "3434";
 
-  window.localStorage.setItem("textream:virtual-deck-host", host);
+  window.localStorage.setItem(BACKEND_HOST_STORAGE_KEY, host);
 
   if (host.startsWith("http://") || host.startsWith("https://")) {
     return host.replace(/\/$/, "");
   }
 
   return `http://${host}:${port}`;
+}
+
+function getSafeBackendHost(host: string) {
+  const trimmedHost = host.trim();
+
+  if (isCurrentWebAppHost(trimmedHost)) {
+    window.localStorage.removeItem(BACKEND_HOST_STORAGE_KEY);
+
+    return "127.0.0.1";
+  }
+
+  return trimmedHost || "127.0.0.1";
+}
+
+function isCurrentWebAppHost(host: string) {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    const parsedHost = host.startsWith("http://") || host.startsWith("https://")
+      ? new URL(host).hostname
+      : host.split(":")[0];
+
+    return parsedHost.toLowerCase() === window.location.hostname.toLowerCase();
+  } catch {
+    return false;
+  }
 }
 
 function isMixedContentBackendUrl(backendUrl: string) {
@@ -655,7 +685,7 @@ function LoginRequired({
     }
 
     return (
-      window.localStorage.getItem("textream:virtual-deck-host") ||
+      window.localStorage.getItem(BACKEND_HOST_STORAGE_KEY) ||
       "127.0.0.1"
     );
   });
@@ -664,7 +694,7 @@ function LoginRequired({
     const nextHost = host.trim();
 
     if (nextHost) {
-      window.localStorage.setItem("textream:virtual-deck-host", nextHost);
+      window.localStorage.setItem(BACKEND_HOST_STORAGE_KEY, nextHost);
     }
 
     onRetry();
