@@ -231,6 +231,14 @@ function getBackendUrl() {
   return `http://${host}:${port}`;
 }
 
+function isMixedContentBackendUrl(backendUrl: string) {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return window.location.protocol === "https:" && backendUrl.startsWith("http://");
+}
+
 async function apiGet<T>(path: string) {
   const response = await fetch(`${getBackendUrl()}${path}`);
 
@@ -970,7 +978,33 @@ export function VirtualDeckHome() {
 
         {state === "error" && (
           <div className="rounded-2xl border border-dashed border-[#543236] bg-[#171114] p-5 text-sm text-[#f0b8bf] sm:col-span-2 xl:col-span-3">
-            Nao foi possivel conectar ao host do Textream.
+            <div className="font-semibold">
+              Nao foi possivel conectar ao host do Textream.
+            </div>
+            <div className="mt-2 leading-6 text-[#d89aa4]">
+              {(() => {
+                const backendUrl = getBackendUrl();
+
+                if (isMixedContentBackendUrl(backendUrl)) {
+                  return (
+                    <>
+                      Tentando acessar {backendUrl}, mas esta pagina esta em
+                      HTTPS. O navegador pode bloquear conexoes para o backend
+                      local em HTTP. Abra o deck pelo endereco local gerado pelo
+                      Textream Desktop ou configure um backend HTTPS.
+                    </>
+                  );
+                }
+
+                return (
+                  <>
+                    Tentando acessar {backendUrl}. Abra o deck pelo link/QR do
+                    Textream Desktop ou informe o IP do computador onde o app
+                    esta rodando.
+                  </>
+                );
+              })()}
+            </div>
           </div>
         )}
 
