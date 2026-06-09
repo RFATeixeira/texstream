@@ -15,13 +15,18 @@ import {
   CircleHelp,
   LoaderCircle,
   LogOut,
-  Mic,
-  MicOff,
   RadioTower,
   Volume2,
   VolumeX,
   WifiOff,
 } from "lucide-react";
+
+import {
+  FaMicrophone,
+  FaMicrophoneSlash,
+  FaVolumeMute,
+  FaVolumeUp,
+} from "react-icons/fa";
 import type { CSSProperties, ReactNode, SVGProps } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getFirebaseAuth, isFirebaseConfigured } from "../../lib/firebase";
@@ -54,6 +59,14 @@ type VolumeController = {
   row: number;
   column: number;
   volume: number;
+
+  // Opção vinda do backend para mostrar o botão interno de mute
+  showMuteButton?: boolean;
+  muteButtonEnabled?: boolean;
+  hasMuteButton?: boolean;
+
+  // Estado atual do mute vindo do OBS snapshot
+  muted?: boolean;
 };
 
 type MacroTemplate = {
@@ -607,8 +620,8 @@ function getCellKeyFromLinearIndex(index: number, rows: number, columns: number)
     index >= 0 && index < totalCells
       ? index
       : index >= 1 && index <= totalCells
-      ? index - 1
-      : undefined;
+        ? index - 1
+        : undefined;
 
   if (typeof normalizedIndex !== "number") {
     return undefined;
@@ -748,6 +761,14 @@ function getVolumeOverrideKey(deckId: string, controllerId: string) {
   return `${deckId}:${controllerId}`;
 }
 
+function shouldShowVolumeMuteButton(controller: VolumeController) {
+  return Boolean(
+    controller.showMuteButton ??
+    controller.muteButtonEnabled ??
+    controller.hasMuteButton
+  );
+}
+
 function normalizeAudioInputName(inputName?: string) {
   return inputName?.trim().toLowerCase() ?? "";
 }
@@ -786,20 +807,20 @@ function withOptimisticAudioMuted(
   );
   const audioInputStates = inputExists
     ? currentAudioInputStates.map((inputState) =>
-        normalizeAudioInputName(inputState.inputName) === normalizedInputName
-          ? {
-              ...inputState,
-              muted,
-            }
-          : inputState
-      )
-    : [
-        ...currentAudioInputStates,
-        {
-          inputName: inputName?.trim() ?? "",
+      normalizeAudioInputName(inputState.inputName) === normalizedInputName
+        ? {
+          ...inputState,
           muted,
-        },
-      ];
+        }
+        : inputState
+    )
+    : [
+      ...currentAudioInputStates,
+      {
+        inputName: inputName?.trim() ?? "",
+        muted,
+      },
+    ];
 
   return {
     connected: obsSnapshot?.connected ?? true,
@@ -840,9 +861,9 @@ function applyMacroState(
   return macros.map((currentMacro) =>
     currentMacro.id === macroId
       ? {
-          ...currentMacro,
-          deckStateActive,
-        }
+        ...currentMacro,
+        deckStateActive,
+      }
       : currentMacro
   );
 }
@@ -907,9 +928,9 @@ function syncMacroWithObsAudioState(
 
   return typeof inputState?.muted === "boolean"
     ? {
-        ...macro,
-        deckStateActive: inputState.muted,
-      }
+      ...macro,
+      deckStateActive: inputState.muted,
+    }
     : macro;
 }
 
@@ -918,21 +939,22 @@ function syncVolumeControllerWithObsAudioState(
   obsSnapshot: ObsSnapshot | null,
   override?: TimedNumberOverride
 ) {
-  if (override && Date.now() - override.updatedAt < OBS_SYNC_OVERRIDE_TTL_MS) {
-    return {
-      ...controller,
-      volume: override.value,
-    };
-  }
-
   const inputState = getObsAudioInputState(obsSnapshot, controller.inputName);
+  const isVolumeOverrideActive =
+    override && Date.now() - override.updatedAt < OBS_SYNC_OVERRIDE_TTL_MS;
 
-  return typeof inputState?.volume === "number"
-    ? {
-        ...controller,
-        volume: clampVolume(inputState.volume),
-      }
-    : controller;
+  return {
+    ...controller,
+    volume: isVolumeOverrideActive
+      ? override.value
+      : typeof inputState?.volume === "number"
+        ? clampVolume(inputState.volume)
+        : controller.volume,
+    muted:
+      typeof inputState?.muted === "boolean"
+        ? inputState.muted
+        : controller.muted,
+  };
 }
 
 function pruneMacroStateOverrides(
@@ -1023,6 +1045,31 @@ async function setVolumeControllerVolume(
   console.warn("Nao foi possivel ajustar o volume.");
 }
 
+type ObsMuteResult = {
+  ok: boolean;
+  inputName: string;
+  muted: boolean;
+  message?: string;
+};
+
+async function setVolumeControllerMuted(controller: VolumeController) {
+  const response = await fetch(`${getBackendUrl()}/obs/audio-mute-toggle`, {
+    body: JSON.stringify({
+      inputName: controller.inputName,
+    }),
+    headers: {
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(`API ${response.status}`);
+  }
+
+  return response.json() as Promise<ObsMuteResult>;
+}
+
 function getActionLabel(macro?: MacroTemplate) {
   if (!macro) {
     return "Livre";
@@ -1050,9 +1097,9 @@ function getActionLabel(macro?: MacroTemplate) {
 function isActiveSceneMacro(macro: MacroTemplate | undefined, activeSceneName: string) {
   return Boolean(
     macro?.actionType === "obs-scene" &&
-      macro.obsSceneName?.trim() &&
-      activeSceneName.trim() &&
-      macro.obsSceneName.trim().toLowerCase() === activeSceneName.trim().toLowerCase()
+    macro.obsSceneName?.trim() &&
+    activeSceneName.trim() &&
+    macro.obsSceneName.trim().toLowerCase() === activeSceneName.trim().toLowerCase()
   );
 }
 
@@ -1087,11 +1134,11 @@ function DeckIcon({ macro }: { macro?: MacroTemplate }) {
         !normalizedInputName.includes("mic"));
     const Icon = useVolumeIcon
       ? macro.deckStateActive
-        ? VolumeX
-        : Volume2
+        ? FaVolumeMute
+        : FaVolumeUp
       : macro.deckStateActive
-      ? MicOff
-      : Mic;
+        ? FaMicrophoneSlash
+        : FaMicrophone;
 
     return <Icon className="size-14 sm:size-16" aria-hidden="true" />;
   }
@@ -1155,17 +1202,59 @@ function VolumeControllerTile({
   className = "",
   controller,
   onCommit,
+  onMuteToggle,
   onVolumeChange,
   style,
 }: {
   className?: string;
   controller: VolumeController;
   onCommit: (controller: VolumeController, volume: number) => void;
+  onMuteToggle?: (controller: VolumeController) => void;
   onVolumeChange: (controllerId: string, volume: number) => void;
   style?: CSSProperties;
 }) {
   const volume = clampVolume(Number(controller.volume) || 0);
   const isVertical = controller.orientation === "vertical";
+  const showMuteButton = shouldShowVolumeMuteButton(controller);
+  const muted = Boolean(controller.muted);
+  const normalizedControllerName = `${controller.name} ${controller.inputName}`
+    .trim()
+    .toLowerCase();
+
+  const useMicIcon =
+    normalizedControllerName.includes("microfone") ||
+    normalizedControllerName.includes("microphone") ||
+    normalizedControllerName.includes("mic");
+
+  const MuteIcon = useMicIcon
+    ? muted
+      ? FaMicrophoneSlash
+      : FaMicrophone
+    : muted
+      ? FaVolumeMute
+      : FaVolumeUp;
+
+  const muteButton = showMuteButton ? (
+    <button
+      aria-label={`${muted ? "Desmutar" : "Mutar"} ${controller.name || controller.inputName || "Volume"
+        }`.trim()}
+      aria-pressed={muted}
+      className={[
+        "flex w-full h-28 border-2 border-gray-600 size-11 shrink-0 items-center justify-center rounded-2xl bg-[#1B242E] transition active:scale-95",
+        muted ? "text-[#ff5b7a]" : "text-[#3A93F5]",
+      ].join(" ")}
+      onClick={(event) => {
+        event.stopPropagation();
+        onMuteToggle?.(controller);
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onTouchEnd={(event) => event.stopPropagation()}
+      title={muted ? "Desmutar" : "Mutar"}
+      type="button"
+    >
+      <MuteIcon className="size-12" aria-hidden="true" />
+    </button>
+  ) : null;
 
   return (
     <div
@@ -1187,9 +1276,15 @@ function VolumeControllerTile({
           isVertical ? "w-full flex-col text-center" : "flex-[0.8]",
         ].join(" ")}
       >
-        <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-[#1B242E] text-[#3A93F5]">
-          <Volume2 className="size-6" aria-hidden="true" />
+        <div
+          className={[
+            "flex size-11 shrink-0 items-center justify-center rounded-2xl bg-[#1B242E]",
+            muted ? "text-[#ff5b7a]" : "text-[#3A93F5]",
+          ].join(" ")}
+        >
+          <MuteIcon className="size-6" aria-hidden="true" />
         </div>
+
         <div className="min-w-0">
           <div className="truncate text-sm font-bold text-white">
             {controller.name || controller.inputName || "Volume"}
@@ -1203,34 +1298,48 @@ function VolumeControllerTile({
       <div
         className={[
           "relative flex items-center justify-center",
-          isVertical ? "min-h-0 w-full flex-1 py-5" : "min-w-0 flex-[2.6]",
+          isVertical
+            ? "min-h-0 w-full flex-1 flex-col gap-3 py-3"
+            : "min-w-0 flex-[2.6] gap-3",
         ].join(" ")}
       >
-        <input
-          aria-label={`Volume ${controller.name || controller.inputName || ""}`.trim()}
+        {!isVertical && muteButton}
+
+        <div
           className={[
-            "virtual-volume-range",
-            isVertical
-              ? "virtual-volume-range-vertical absolute"
-              : "virtual-volume-range-horizontal w-full",
+            "relative flex items-center justify-center",
+            isVertical ? "min-h-0 w-full flex-1" : "min-w-0 flex-1",
           ].join(" ")}
-          max={100}
-          min={0}
-          onChange={(event) =>
-            onVolumeChange(controller.id, clampVolume(Number(event.target.value)))
-          }
-          onKeyUp={(event) =>
-            onCommit(controller, clampVolume(Number(event.currentTarget.value)))
-          }
-          onPointerUp={(event) =>
-            onCommit(controller, clampVolume(Number(event.currentTarget.value)))
-          }
-          onTouchEnd={(event) =>
-            onCommit(controller, clampVolume(Number(event.currentTarget.value)))
-          }
-          type="range"
-          value={volume}
-        />
+        >
+          <input
+            aria-label={`Volume ${controller.name || controller.inputName || ""
+              }`.trim()}
+            className={[
+              "virtual-volume-range",
+              isVertical
+                ? "virtual-volume-range-vertical absolute"
+                : "virtual-volume-range-horizontal w-full",
+            ].join(" ")}
+            max={100}
+            min={0}
+            onChange={(event) =>
+              onVolumeChange(controller.id, clampVolume(Number(event.target.value)))
+            }
+            onKeyUp={(event) =>
+              onCommit(controller, clampVolume(Number(event.currentTarget.value)))
+            }
+            onPointerUp={(event) =>
+              onCommit(controller, clampVolume(Number(event.currentTarget.value)))
+            }
+            onTouchEnd={(event) =>
+              onCommit(controller, clampVolume(Number(event.currentTarget.value)))
+            }
+            type="range"
+            value={volume}
+          />
+        </div>
+
+        {isVertical && muteButton}
       </div>
     </div>
   );
@@ -1812,7 +1921,7 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     .filter((macro) => getMacroPage(macro, deck?.actionPositions) === currentPage)
     .map((macro) =>
       syncMacroWithObsAudioState(macro, obsSnapshot, macroStateOverrides[macro.id])
-  );
+    );
   const deckMacroByCellKey = new Map<string, MacroTemplate>();
   const deckMacroCellPriority = new Map<string, number>();
 
@@ -2089,9 +2198,9 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
             (controller) =>
               controller.id === controllerId
                 ? {
-                    ...controller,
-                    volume,
-                  }
+                  ...controller,
+                  volume,
+                }
                 : controller
           ),
         };
@@ -2108,6 +2217,67 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
       await setVolumeControllerVolume(controller, volume);
     } catch (error) {
       console.error("Erro ao ajustar volume virtual:", error);
+    }
+  }
+
+
+  function updateVolumeControllerMuted(controllerId: string, muted: boolean) {
+    setDecks((currentDecks) =>
+      currentDecks.map((currentDeck) => {
+        if (currentDeck.id !== deckId) {
+          return currentDeck;
+        }
+
+        return {
+          ...currentDeck,
+          volumeControllers: (currentDeck.volumeControllers ?? []).map(
+            (controller) =>
+              controller.id === controllerId
+                ? {
+                  ...controller,
+                  muted,
+                }
+                : controller
+          ),
+        };
+      })
+    );
+  }
+
+  async function toggleVolumeControllerMute(controller: VolumeController) {
+    const inputState = getObsAudioInputState(obsSnapshot, controller.inputName);
+    const previousMuted =
+      typeof inputState?.muted === "boolean"
+        ? inputState.muted
+        : Boolean(controller.muted);
+    const nextMuted = !previousMuted;
+
+    try {
+      setObsSnapshot((currentSnapshot) =>
+        withOptimisticAudioMuted(currentSnapshot, controller.inputName, nextMuted)
+      );
+      updateVolumeControllerMuted(controller.id, nextMuted);
+
+      const result = await setVolumeControllerMuted(controller);
+      const confirmedMuted =
+        typeof result.muted === "boolean" ? result.muted : nextMuted;
+
+      setObsSnapshot((currentSnapshot) =>
+        withOptimisticAudioMuted(
+          currentSnapshot,
+          controller.inputName,
+          confirmedMuted
+        )
+      );
+
+      updateVolumeControllerMuted(controller.id, confirmedMuted);
+    } catch (error) {
+      console.error("Erro ao mutar volume virtual:", error);
+
+      setObsSnapshot((currentSnapshot) =>
+        withOptimisticAudioMuted(currentSnapshot, controller.inputName, previousMuted)
+      );
+      updateVolumeControllerMuted(controller.id, previousMuted);
     }
   }
 
@@ -2214,6 +2384,9 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
                       }
                       onVolumeChange={updateVolumeController}
                       style={horizontalControlStyle}
+                      onMuteToggle={(nextController) => {
+                        void toggleVolumeControllerMute(nextController);
+                      }}
                     />
                   ))}
                 </div>
@@ -2235,6 +2408,9 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
                         }
                         onVolumeChange={updateVolumeController}
                         style={verticalControlStyle}
+                        onMuteToggle={(nextController) => {
+                          void toggleVolumeControllerMute(nextController);
+                        }}
                       />
                     ))}
                   </div>
@@ -2247,14 +2423,14 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
                     const isActiveScene = isActiveSceneMacro(macro, activeSceneName);
                     const isMutedAudio = Boolean(
                       macro?.actionType === "obs-audio-mute" &&
-                        macro.deckStateActive
+                      macro.deckStateActive
                     );
                     const isStateActive = Boolean(
                       macro &&
-                        macro.actionType !== "obs-scene" &&
-                        macro.actionType !== "obs-audio-mute" &&
-                        isObsSourceMacro(macro) &&
-                        macro.deckStateActive
+                      macro.actionType !== "obs-scene" &&
+                      macro.actionType !== "obs-audio-mute" &&
+                      isObsSourceMacro(macro) &&
+                      macro.deckStateActive
                     );
                     const hasPressError = Boolean(
                       macro && macroPressErrors[macro.id]
@@ -2266,8 +2442,8 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
                         aria-disabled={!macro}
                         aria-pressed={
                           macro?.actionType === "obs-scene" ||
-                          macro?.actionType === "obs-audio-mute" ||
-                          (macro && isObsSourceMacro(macro))
+                            macro?.actionType === "obs-audio-mute" ||
+                            (macro && isObsSourceMacro(macro))
                             ? Boolean(isActiveScene || macro?.deckStateActive)
                             : undefined
                         }
@@ -2276,10 +2452,10 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
                           hasPressError
                             ? "border-[#ff5b7a] shadow-[0_0_0_2px_rgba(255,91,122,0.25),0_0_24px_rgba(255,91,122,0.2)]"
                             : isMutedAudio
-                            ? "border-[#ff3b5f] shadow-[0_0_0_2px_rgba(255,59,95,0.26),0_0_28px_rgba(255,59,95,0.2)]"
-                            : isActiveScene || isStateActive
-                            ? "border-[#00b4ff] shadow-[0_0_0_2px_rgba(0,180,255,0.28),0_0_28px_rgba(0,180,255,0.18)]"
-                            : "border-[#3B424C]",
+                              ? "border-[#ff3b5f] shadow-[0_0_0_2px_rgba(255,59,95,0.26),0_0_28px_rgba(255,59,95,0.2)]"
+                              : isActiveScene || isStateActive
+                                ? "border-[#00b4ff] shadow-[0_0_0_2px_rgba(0,180,255,0.28),0_0_28px_rgba(0,180,255,0.18)]"
+                                : "border-[#3B424C]",
                         ].join(" ")}
                         onClick={macro ? () => void runMacro(macro) : undefined}
                         type="button"
@@ -2322,6 +2498,9 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
                         }
                         onVolumeChange={updateVolumeController}
                         style={verticalControlStyle}
+                        onMuteToggle={(nextController) => {
+                          void toggleVolumeControllerMute(nextController);
+                        }}
                       />
                     ))}
                   </div>
@@ -2343,6 +2522,9 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
                       }
                       onVolumeChange={updateVolumeController}
                       style={horizontalControlStyle}
+                      onMuteToggle={(nextController) => {
+                        void toggleVolumeControllerMute(nextController);
+                      }}
                     />
                   ))}
                 </div>
