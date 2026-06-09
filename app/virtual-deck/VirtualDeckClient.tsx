@@ -1938,12 +1938,14 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     }
 
     if (macro.actionType === "obs-audio-mute") {
-      const nextActive =
-        typeof macro.obsAudioMuted === "boolean"
-          ? macro.obsAudioMuted
-          : !macro.deckStateActive;
+      const inputState = getObsAudioInputState(obsSnapshot, macro.obsAudioInputName);
+      const currentActive =
+        typeof inputState?.muted === "boolean"
+          ? inputState.muted
+          : Boolean(macro.deckStateActive);
+      const nextActive = !currentActive;
 
-      optimisticState.previousActive = macro.deckStateActive;
+      optimisticState.previousActive = currentActive;
       setMacroStateOverrides((currentOverrides) => ({
         ...currentOverrides,
         [macro.id]: {
@@ -2235,11 +2237,15 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
                     const macro = deckMacroByCellKey.get(cell.key);
                     const imageSrc = getImageSrc(macro);
                     const isActiveScene = isActiveSceneMacro(macro, activeSceneName);
+                    const isMutedAudio = Boolean(
+                      macro?.actionType === "obs-audio-mute" &&
+                        macro.deckStateActive
+                    );
                     const isStateActive = Boolean(
                       macro &&
                         macro.actionType !== "obs-scene" &&
-                        (macro.actionType === "obs-audio-mute" ||
-                          isObsSourceMacro(macro)) &&
+                        macro.actionType !== "obs-audio-mute" &&
+                        isObsSourceMacro(macro) &&
                         macro.deckStateActive
                     );
                     const hasPressError = Boolean(
@@ -2261,6 +2267,8 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
                           "group relative flex size-full aspect-square touch-manipulation flex-col items-center justify-center gap-3 overflow-hidden rounded-4xl border-2 bg-[#181E23] p-3 text-center transition active:scale-[0.98]",
                           hasPressError
                             ? "border-[#ff5b7a] shadow-[0_0_0_2px_rgba(255,91,122,0.25),0_0_24px_rgba(255,91,122,0.2)]"
+                            : isMutedAudio
+                            ? "border-[#ff3b5f] shadow-[0_0_0_2px_rgba(255,59,95,0.26),0_0_28px_rgba(255,59,95,0.2)]"
                             : isActiveScene || isStateActive
                             ? "border-[#00b4ff] shadow-[0_0_0_2px_rgba(0,180,255,0.28),0_0_28px_rgba(0,180,255,0.18)]"
                             : "border-[#3B424C]",
