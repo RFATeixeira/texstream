@@ -22,7 +22,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import type { CSSProperties, ReactNode, SVGProps } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getFirebaseAuth, isFirebaseConfigured } from "../../lib/firebase";
 import { renderDeckIcon } from "./deckIconCatalog";
 
@@ -73,6 +73,17 @@ type MacroTemplate = {
 type ObsSnapshot = {
   connected: boolean;
   currentProgramSceneName?: string;
+};
+
+type ScreenWakeLockSentinel = {
+  addEventListener?: (type: "release", listener: () => void) => void;
+  release: () => Promise<void>;
+};
+
+type NavigatorWithWakeLock = Navigator & {
+  wakeLock?: {
+    request: (type: "screen") => Promise<ScreenWakeLockSentinel>;
+  };
 };
 
 type LoadState = "loading" | "ready" | "error";
@@ -472,48 +483,6 @@ function clampVolume(volume: number) {
   return Math.min(100, Math.max(0, Math.round(volume)));
 }
 
-function getVolumeOverrideKey(deckId: string, controllerId: string) {
-  return `${deckId}:${controllerId}`;
-}
-
-function applyVolumeOverrides(
-  decks: VirtualDeck[],
-  volumeOverrides: Record<string, number>
-) {
-  return decks.map((deck) => ({
-    ...deck,
-    volumeControllers: deck.volumeControllers
-      ? deck.volumeControllers.map((controller) => {
-          const override =
-            volumeOverrides[getVolumeOverrideKey(deck.id, controller.id)];
-
-          return typeof override === "number"
-            ? {
-                ...controller,
-                volume: override,
-              }
-            : controller;
-        })
-      : deck.volumeControllers,
-  }));
-}
-
-function applyMacroStateOverrides(
-  macros: MacroTemplate[],
-  macroStateOverrides: Record<string, boolean>
-) {
-  return macros.map((macro) => {
-    const override = macroStateOverrides[macro.id];
-
-    return typeof override === "boolean"
-      ? {
-          ...macro,
-          deckStateActive: override,
-        }
-      : macro;
-  });
-}
-
 async function setVolumeControllerVolume(
   controller: VolumeController,
   volume: number
@@ -604,6 +573,56 @@ function DeckIcon({ macro }: { macro?: MacroTemplate }) {
   return renderDeckIcon(macro?.deckIcon, macro?.actionType, {
     className: "size-14 sm:size-16",
   });
+}
+
+function useScreenWakeLock(enabled: boolean) {
+  useEffect(() => {
+    if (!enabled || typeof navigator === "undefined") {
+      return;
+    }
+
+    let wakeLock: ScreenWakeLockSentinel | null = null;
+    let cancelled = false;
+
+    async function requestWakeLock() {
+      const wakeLockApi = (navigator as NavigatorWithWakeLock).wakeLock;
+
+      if (wakeLock || !wakeLockApi || document.visibilityState !== "visible") {
+        return;
+      }
+
+      try {
+        wakeLock = await wakeLockApi.request("screen");
+        wakeLock.addEventListener?.("release", () => {
+          wakeLock = null;
+        });
+      } catch {
+        wakeLock = null;
+      }
+    }
+
+    function handleVisibilityChange() {
+      if (!cancelled && document.visibilityState === "visible") {
+        void requestWakeLock();
+      }
+    }
+
+    void requestWakeLock();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pointerdown", requestWakeLock);
+    window.addEventListener("touchstart", requestWakeLock);
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pointerdown", requestWakeLock);
+      window.removeEventListener("touchstart", requestWakeLock);
+
+      if (wakeLock) {
+        void wakeLock.release();
+      }
+    };
+  }, [enabled]);
 }
 
 function VolumeControllerTile({
@@ -1140,8 +1159,6 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   const [hasCheckedDesktopSession, setHasCheckedDesktopSession] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
-  const volumeOverridesRef = useRef<Record<string, number>>({});
-  const macroStateOverridesRef = useRef<Record<string, boolean>>({});
   const loggedIn = profile ? isLoggedIn(profile) : false;
   const deck = decks.find((item) => item.id === deckId);
   const rows = deck?.rows ?? fallbackRows;
@@ -1157,8 +1174,8 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
         apiGet<ObsSnapshot>("/obs/snapshot").catch(() => null),
       ]);
 
-      setDecks(applyVolumeOverrides(nextDecks, volumeOverridesRef.current));
-      setMacros(applyMacroStateOverrides(nextMacros, macroStateOverridesRef.current));
+      setDecks(nextDecks);
+      setMacros(nextMacros);
       setObsSnapshot(nextObsSnapshot);
       setHasCheckedDesktopSession(true);
 
@@ -1179,6 +1196,8 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
 
     return () => window.clearInterval(interval);
   }, [load, loggedIn, profile]);
+
+  useScreenWakeLock(loggedIn);
 
   const handleGoogleLogin = useCallback(async () => {
     if (authState === "signing-in") {
@@ -1312,11 +1331,6 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     if (macro.actionType === "obs-audio-mute") {
       const nextActive = !macro.deckStateActive;
 
-      macroStateOverridesRef.current = {
-        ...macroStateOverridesRef.current,
-        [macro.id]: nextActive,
-      };
-
       setMacros((currentMacros) =>
         currentMacros.map((currentMacro) =>
           currentMacro.id === macro.id
@@ -1340,11 +1354,6 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   }
 
   function updateVolumeController(controllerId: string, volume: number) {
-    volumeOverridesRef.current = {
-      ...volumeOverridesRef.current,
-      [getVolumeOverrideKey(deckId, controllerId)]: volume,
-    };
-
     setDecks((currentDecks) =>
       currentDecks.map((currentDeck) => {
         if (currentDeck.id !== deckId) {
