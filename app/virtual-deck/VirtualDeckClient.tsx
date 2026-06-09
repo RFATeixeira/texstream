@@ -57,6 +57,7 @@ type MacroTemplate = {
   obsSceneName?: string;
   obsSourceName?: string;
   obsAudioInputName?: string;
+  obsAudioMuted?: boolean;
   origin?: string;
   deckTitle?: string;
   deckImageOn?: string;
@@ -70,9 +71,26 @@ type MacroTemplate = {
   deckPage?: number;
 };
 
+type ObsAudioInputState = {
+  inputName: string;
+  muted?: boolean;
+  volume?: number;
+};
+
 type ObsSnapshot = {
   connected: boolean;
+  audioInputStates?: ObsAudioInputState[];
   currentProgramSceneName?: string;
+};
+
+type TimedBooleanOverride = {
+  updatedAt: number;
+  value: boolean;
+};
+
+type TimedNumberOverride = {
+  updatedAt: number;
+  value: number;
 };
 
 type ScreenWakeLockSentinel = {
@@ -115,6 +133,7 @@ const USER_PARAM_KEYS = [
 ];
 const USER_STORAGE_KEY = "textream:virtual-deck-user";
 const BACKEND_HOST_STORAGE_KEY = "textream:virtual-deck-host";
+const OBS_SYNC_OVERRIDE_TTL_MS = 5000;
 
 function getEmptyUserProfile(): UserProfile {
   return {
@@ -481,6 +500,135 @@ function getVolumeControllerSide(controller: VolumeController) {
 
 function clampVolume(volume: number) {
   return Math.min(100, Math.max(0, Math.round(volume)));
+}
+
+function getVolumeOverrideKey(deckId: string, controllerId: string) {
+  return `${deckId}:${controllerId}`;
+}
+
+function normalizeAudioInputName(inputName?: string) {
+  return inputName?.trim().toLowerCase() ?? "";
+}
+
+function getObsAudioInputState(
+  obsSnapshot: ObsSnapshot | null,
+  inputName?: string
+) {
+  const normalizedInputName = normalizeAudioInputName(inputName);
+
+  if (!normalizedInputName) {
+    return undefined;
+  }
+
+  return obsSnapshot?.audioInputStates?.find(
+    (inputState) =>
+      normalizeAudioInputName(inputState.inputName) === normalizedInputName
+  );
+}
+
+function syncMacroWithObsAudioState(
+  macro: MacroTemplate,
+  obsSnapshot: ObsSnapshot | null,
+  override?: TimedBooleanOverride
+) {
+  if (macro.actionType !== "obs-audio-mute") {
+    return macro;
+  }
+
+  if (override && Date.now() - override.updatedAt < OBS_SYNC_OVERRIDE_TTL_MS) {
+    return {
+      ...macro,
+      deckStateActive: override.value,
+    };
+  }
+
+  const inputState = getObsAudioInputState(obsSnapshot, macro.obsAudioInputName);
+
+  return typeof inputState?.muted === "boolean"
+    ? {
+        ...macro,
+        deckStateActive: inputState.muted,
+      }
+    : macro;
+}
+
+function syncVolumeControllerWithObsAudioState(
+  controller: VolumeController,
+  obsSnapshot: ObsSnapshot | null,
+  override?: TimedNumberOverride
+) {
+  if (override && Date.now() - override.updatedAt < OBS_SYNC_OVERRIDE_TTL_MS) {
+    return {
+      ...controller,
+      volume: override.value,
+    };
+  }
+
+  const inputState = getObsAudioInputState(obsSnapshot, controller.inputName);
+
+  return typeof inputState?.volume === "number"
+    ? {
+        ...controller,
+        volume: clampVolume(inputState.volume),
+      }
+    : controller;
+}
+
+function pruneMacroStateOverrides(
+  overrides: Record<string, TimedBooleanOverride>,
+  macros: MacroTemplate[],
+  obsSnapshot: ObsSnapshot | null
+) {
+  const now = Date.now();
+  const nextOverrides: Record<string, TimedBooleanOverride> = {};
+
+  for (const [macroId, override] of Object.entries(overrides)) {
+    const macro = macros.find((item) => item.id === macroId);
+    const inputState = getObsAudioInputState(obsSnapshot, macro?.obsAudioInputName);
+    const isExpired = now - override.updatedAt >= OBS_SYNC_OVERRIDE_TTL_MS;
+    const isSynced = inputState?.muted === override.value;
+
+    if (!isExpired && !isSynced) {
+      nextOverrides[macroId] = override;
+    }
+  }
+
+  return nextOverrides;
+}
+
+function pruneVolumeOverrides(
+  overrides: Record<string, TimedNumberOverride>,
+  decks: VirtualDeck[],
+  obsSnapshot: ObsSnapshot | null
+) {
+  const now = Date.now();
+  const nextOverrides: Record<string, TimedNumberOverride> = {};
+
+  for (const [overrideKey, override] of Object.entries(overrides)) {
+    const controller = decks
+      .flatMap((deck) =>
+        (deck.volumeControllers ?? []).map((volumeController) => ({
+          deck,
+          volumeController,
+        }))
+      )
+      .find(
+        (item) =>
+          getVolumeOverrideKey(item.deck.id, item.volumeController.id) ===
+          overrideKey
+      )?.volumeController;
+    const inputState = getObsAudioInputState(obsSnapshot, controller?.inputName);
+    const isExpired = now - override.updatedAt >= OBS_SYNC_OVERRIDE_TTL_MS;
+    const isSynced =
+      typeof inputState?.volume === "number" &&
+      clampVolume(inputState.volume) === override.value;
+
+    if (!isExpired && !isSynced) {
+      nextOverrides[overrideKey] = override;
+    }
+  }
+
+  return nextOverrides;
 }
 
 async function setVolumeControllerVolume(
@@ -1159,6 +1307,12 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   const [hasCheckedDesktopSession, setHasCheckedDesktopSession] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const [macroStateOverrides, setMacroStateOverrides] = useState<
+    Record<string, TimedBooleanOverride>
+  >({});
+  const [volumeOverrides, setVolumeOverrides] = useState<
+    Record<string, TimedNumberOverride>
+  >({});
   const loggedIn = profile ? isLoggedIn(profile) : false;
   const deck = decks.find((item) => item.id === deckId);
   const rows = deck?.rows ?? fallbackRows;
@@ -1177,6 +1331,12 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
       setDecks(nextDecks);
       setMacros(nextMacros);
       setObsSnapshot(nextObsSnapshot);
+      setMacroStateOverrides((currentOverrides) =>
+        pruneMacroStateOverrides(currentOverrides, nextMacros, nextObsSnapshot)
+      );
+      setVolumeOverrides((currentOverrides) =>
+        pruneVolumeOverrides(currentOverrides, nextDecks, nextObsSnapshot)
+      );
       setHasCheckedDesktopSession(true);
 
       setState("ready");
@@ -1243,12 +1403,20 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     );
   }
 
-  const deckMacros = getDeckMacros(macros, deckId).filter(
-    (macro) => getMacroPage(macro) === currentPage
-  );
-  const volumeControllers = (deck?.volumeControllers ?? []).filter(
-    (controller) => getVolumeControllerPage(controller) === currentPage
-  );
+  const deckMacros = getDeckMacros(macros, deckId)
+    .filter((macro) => getMacroPage(macro) === currentPage)
+    .map((macro) =>
+      syncMacroWithObsAudioState(macro, obsSnapshot, macroStateOverrides[macro.id])
+    );
+  const volumeControllers = (deck?.volumeControllers ?? [])
+    .filter((controller) => getVolumeControllerPage(controller) === currentPage)
+    .map((controller) =>
+      syncVolumeControllerWithObsAudioState(
+        controller,
+        obsSnapshot,
+        volumeOverrides[getVolumeOverrideKey(deckId, controller.id)]
+      )
+    );
   const activeSceneName = obsSnapshot?.currentProgramSceneName ?? "";
   const topVolumeControllers = volumeControllers.filter(
     (controller) => getVolumeControllerSide(controller) === "top"
@@ -1329,8 +1497,18 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
 
   async function runMacro(macro: MacroTemplate) {
     if (macro.actionType === "obs-audio-mute") {
-      const nextActive = !macro.deckStateActive;
+      const nextActive =
+        typeof macro.obsAudioMuted === "boolean"
+          ? macro.obsAudioMuted
+          : !macro.deckStateActive;
 
+      setMacroStateOverrides((currentOverrides) => ({
+        ...currentOverrides,
+        [macro.id]: {
+          updatedAt: Date.now(),
+          value: nextActive,
+        },
+      }));
       setMacros((currentMacros) =>
         currentMacros.map((currentMacro) =>
           currentMacro.id === macro.id
@@ -1354,6 +1532,13 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   }
 
   function updateVolumeController(controllerId: string, volume: number) {
+    setVolumeOverrides((currentOverrides) => ({
+      ...currentOverrides,
+      [getVolumeOverrideKey(deckId, controllerId)]: {
+        updatedAt: Date.now(),
+        value: volume,
+      },
+    }));
     setDecks((currentDecks) =>
       currentDecks.map((currentDeck) => {
         if (currentDeck.id !== deckId) {
