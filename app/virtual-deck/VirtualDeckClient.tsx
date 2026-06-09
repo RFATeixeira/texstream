@@ -15,12 +15,14 @@ import {
   CircleHelp,
   LoaderCircle,
   LogOut,
+  Mic,
+  MicOff,
   RadioTower,
   Volume2,
   WifiOff,
 } from "lucide-react";
 import type { CSSProperties, ReactNode, SVGProps } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getFirebaseAuth, isFirebaseConfigured } from "../../lib/firebase";
 import { renderDeckIcon } from "./deckIconCatalog";
 
@@ -470,6 +472,48 @@ function clampVolume(volume: number) {
   return Math.min(100, Math.max(0, Math.round(volume)));
 }
 
+function getVolumeOverrideKey(deckId: string, controllerId: string) {
+  return `${deckId}:${controllerId}`;
+}
+
+function applyVolumeOverrides(
+  decks: VirtualDeck[],
+  volumeOverrides: Record<string, number>
+) {
+  return decks.map((deck) => ({
+    ...deck,
+    volumeControllers: deck.volumeControllers
+      ? deck.volumeControllers.map((controller) => {
+          const override =
+            volumeOverrides[getVolumeOverrideKey(deck.id, controller.id)];
+
+          return typeof override === "number"
+            ? {
+                ...controller,
+                volume: override,
+              }
+            : controller;
+        })
+      : deck.volumeControllers,
+  }));
+}
+
+function applyMacroStateOverrides(
+  macros: MacroTemplate[],
+  macroStateOverrides: Record<string, boolean>
+) {
+  return macros.map((macro) => {
+    const override = macroStateOverrides[macro.id];
+
+    return typeof override === "boolean"
+      ? {
+          ...macro,
+          deckStateActive: override,
+        }
+      : macro;
+  });
+}
+
 async function setVolumeControllerVolume(
   controller: VolumeController,
   volume: number
@@ -551,6 +595,12 @@ function getImageSrc(macro?: MacroTemplate) {
 }
 
 function DeckIcon({ macro }: { macro?: MacroTemplate }) {
+  if (macro?.actionType === "obs-audio-mute") {
+    const Icon = macro.deckStateActive ? MicOff : Mic;
+
+    return <Icon className="size-14 sm:size-16" aria-hidden="true" />;
+  }
+
   return renderDeckIcon(macro?.deckIcon, macro?.actionType, {
     className: "size-14 sm:size-16",
   });
@@ -1090,6 +1140,8 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   const [hasCheckedDesktopSession, setHasCheckedDesktopSession] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const volumeOverridesRef = useRef<Record<string, number>>({});
+  const macroStateOverridesRef = useRef<Record<string, boolean>>({});
   const loggedIn = profile ? isLoggedIn(profile) : false;
   const deck = decks.find((item) => item.id === deckId);
   const rows = deck?.rows ?? fallbackRows;
@@ -1105,8 +1157,8 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
         apiGet<ObsSnapshot>("/obs/snapshot").catch(() => null),
       ]);
 
-      setDecks(nextDecks);
-      setMacros(nextMacros);
+      setDecks(applyVolumeOverrides(nextDecks, volumeOverridesRef.current));
+      setMacros(applyMacroStateOverrides(nextMacros, macroStateOverridesRef.current));
       setObsSnapshot(nextObsSnapshot);
       setHasCheckedDesktopSession(true);
 
@@ -1256,9 +1308,29 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     width: "var(--volume-control-size)",
   } as CSSProperties;
 
-  async function runMacro(macroId: string) {
+  async function runMacro(macro: MacroTemplate) {
+    if (macro.actionType === "obs-audio-mute") {
+      const nextActive = !macro.deckStateActive;
+
+      macroStateOverridesRef.current = {
+        ...macroStateOverridesRef.current,
+        [macro.id]: nextActive,
+      };
+
+      setMacros((currentMacros) =>
+        currentMacros.map((currentMacro) =>
+          currentMacro.id === macro.id
+            ? {
+                ...currentMacro,
+                deckStateActive: nextActive,
+              }
+            : currentMacro
+        )
+      );
+    }
+
     try {
-      await fetch(`${getBackendUrl()}/macros/${macroId}/run`, {
+      await fetch(`${getBackendUrl()}/macros/${macro.id}/run`, {
         method: "POST",
       });
       void load();
@@ -1268,6 +1340,11 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   }
 
   function updateVolumeController(controllerId: string, volume: number) {
+    volumeOverridesRef.current = {
+      ...volumeOverridesRef.current,
+      [getVolumeOverrideKey(deckId, controllerId)]: volume,
+    };
+
     setDecks((currentDecks) =>
       currentDecks.map((currentDeck) => {
         if (currentDeck.id !== deckId) {
@@ -1450,7 +1527,7 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
                             ? "border-[#00b4ff] shadow-[0_0_0_2px_rgba(0,180,255,0.28),0_0_28px_rgba(0,180,255,0.18)]"
                             : "border-[#3B424C]",
                         ].join(" ")}
-                        onClick={macro ? () => void runMacro(macro.id) : undefined}
+                        onClick={macro ? () => void runMacro(macro) : undefined}
                         type="button"
                       >
                         {imageSrc && macro ? (
