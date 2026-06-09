@@ -16,8 +16,6 @@ import {
   LoaderCircle,
   LogOut,
   RadioTower,
-  Volume2,
-  VolumeX,
   WifiOff,
 } from "lucide-react";
 
@@ -1217,6 +1215,7 @@ function VolumeControllerTile({
   const isVertical = controller.orientation === "vertical";
   const showMuteButton = shouldShowVolumeMuteButton(controller);
   const muted = Boolean(controller.muted);
+
   const normalizedControllerName = `${controller.name} ${controller.inputName}`
     .trim()
     .toLowerCase();
@@ -1236,12 +1235,14 @@ function VolumeControllerTile({
 
   const muteButton = showMuteButton ? (
     <button
-      aria-label={`${muted ? "Desmutar" : "Mutar"} ${controller.name || controller.inputName || "Volume"
-        }`.trim()}
+      aria-label={`${muted ? "Desmutar" : "Mutar"} ${
+        controller.name || controller.inputName || "Volume"
+      }`.trim()}
       aria-pressed={muted}
       className={[
-        "flex w-full h-28 border-2 border-gray-600 size-11 shrink-0 items-center justify-center rounded-2xl bg-[#1B242E] transition active:scale-95",
-        muted ? "text-[#ff5b7a]" : "text-[#3A93F5]",
+        "relative z-20 flex shrink-0 items-center justify-center rounded-2xl border-2 border-[#3B424C] bg-[#1B242E] transition active:scale-95",
+        isVertical ? "h-16 w-full" : "h-full min-h-12 w-16",
+        muted ? "border-[#ff5b7a] text-[#ff5b7a]" : "text-[#3A93F5]",
       ].join(" ")}
       onClick={(event) => {
         event.stopPropagation();
@@ -1252,7 +1253,7 @@ function VolumeControllerTile({
       title={muted ? "Desmutar" : "Mutar"}
       type="button"
     >
-      <MuteIcon className="size-12" aria-hidden="true" />
+      <MuteIcon className={isVertical ? "size-9" : "size-7"} aria-hidden="true" />
     </button>
   ) : null;
 
@@ -1261,8 +1262,8 @@ function VolumeControllerTile({
       className={[
         "relative flex overflow-hidden rounded-4xl border-2 border-[#3B424C] bg-[#181E23] p-3",
         isVertical
-          ? "min-h-0 flex-col items-center justify-between"
-          : "min-w-0 items-center gap-4",
+          ? "min-h-0 flex-col items-stretch gap-3"
+          : "min-w-0 items-center gap-3",
         className,
       ].join(" ")}
       onClick={(event) => event.stopPropagation()}
@@ -1272,8 +1273,8 @@ function VolumeControllerTile({
     >
       <div
         className={[
-          "flex min-w-0 items-center gap-2",
-          isVertical ? "w-full flex-col text-center" : "flex-[0.8]",
+          "relative z-20 flex min-w-0 shrink-0 items-center gap-2",
+          isVertical ? "w-full flex-col text-center" : "basis-[34%]",
         ].join(" ")}
       >
         <div
@@ -1297,27 +1298,28 @@ function VolumeControllerTile({
 
       <div
         className={[
-          "relative flex items-center justify-center",
-          isVertical
-            ? "min-h-0 w-full flex-1 flex-col gap-3 py-3"
-            : "min-w-0 flex-[2.6] gap-3",
+          "relative flex min-w-0 items-center justify-center",
+          isVertical ? "min-h-0 w-full flex-1" : "flex-1 gap-3",
         ].join(" ")}
       >
         {!isVertical && muteButton}
 
         <div
           className={[
-            "relative flex items-center justify-center",
-            isVertical ? "min-h-0 w-full flex-1" : "min-w-0 flex-1",
+            "relative flex items-center justify-center overflow-hidden",
+            isVertical
+              ? "min-h-0 w-full flex-1 rounded-2xl px-2 py-6"
+              : "min-w-0 flex-1",
           ].join(" ")}
         >
           <input
-            aria-label={`Volume ${controller.name || controller.inputName || ""
-              }`.trim()}
+            aria-label={`Volume ${
+              controller.name || controller.inputName || ""
+            }`.trim()}
             className={[
               "virtual-volume-range",
               isVertical
-                ? "virtual-volume-range-vertical absolute"
+                ? "virtual-volume-range-vertical absolute z-0"
                 : "virtual-volume-range-horizontal w-full",
             ].join(" ")}
             max={100}
