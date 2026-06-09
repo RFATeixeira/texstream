@@ -19,6 +19,7 @@ import {
   MicOff,
   RadioTower,
   Volume2,
+  VolumeX,
   WifiOff,
 } from "lucide-react";
 import type { CSSProperties, ReactNode, SVGProps } from "react";
@@ -33,7 +34,14 @@ type VirtualDeck = {
   columns: number;
   color?: string;
   pageCount?: number;
+  actionPositions?: Record<string, DeckActionPosition> | null;
   volumeControllers?: VolumeController[] | null;
+};
+
+type DeckActionPosition = {
+  page?: number;
+  row?: number;
+  column?: number;
 };
 
 type VolumeController = {
@@ -53,6 +61,17 @@ type MacroTemplate = {
   name: string;
   deviceId: string;
   key: string;
+  row?: number;
+  column?: number;
+  deckRow?: number;
+  deckColumn?: number;
+  x?: number;
+  y?: number;
+  index?: number;
+  position?: number;
+  slot?: number;
+  buttonIndex?: number;
+  deckIndex?: number;
   actionType?: string;
   obsSceneName?: string;
   obsSourceName?: string;
@@ -91,6 +110,11 @@ type TimedBooleanOverride = {
 type TimedNumberOverride = {
   updatedAt: number;
   value: number;
+};
+
+type OptimisticMacroState = {
+  previousActive?: boolean;
+  previousSceneName?: string;
 };
 
 type ScreenWakeLockSentinel = {
@@ -134,6 +158,9 @@ const USER_PARAM_KEYS = [
 const USER_STORAGE_KEY = "textream:virtual-deck-user";
 const BACKEND_HOST_STORAGE_KEY = "textream:virtual-deck-host";
 const OBS_SYNC_OVERRIDE_TTL_MS = 5000;
+const OBS_SNAPSHOT_POLL_MS = 15000;
+const DECK_CONFIG_SYNC_MS = 5000;
+const BUTTON_ERROR_TTL_MS = 1800;
 
 function getEmptyUserProfile(): UserProfile {
   return {
@@ -442,7 +469,60 @@ function getDeckPageCount(deck?: VirtualDeck, fallbackPageCount = 1) {
   return Math.max(1, Math.min(20, Number(deck?.pageCount) || fallbackPageCount));
 }
 
-function getMacroPage(macro: MacroTemplate) {
+function getMacroActionPosition(
+  macro: MacroTemplate,
+  actionPositions?: Record<string, DeckActionPosition> | null
+) {
+  if (!actionPositions) {
+    return undefined;
+  }
+
+  const directPosition = actionPositions[macro.key] ?? actionPositions[macro.id];
+
+  if (directPosition) {
+    return directPosition;
+  }
+
+  const normalizedCandidates = new Set(
+    [
+      macro.key,
+      macro.id,
+      macro.name,
+      macro.deckTitle,
+      macro.obsSceneName,
+      macro.obsSourceName,
+      macro.obsAudioInputName,
+    ]
+      .filter(Boolean)
+      .map((value) => normalizeActionPositionKey(String(value)))
+  );
+
+  for (const [positionKey, position] of Object.entries(actionPositions)) {
+    if (normalizedCandidates.has(normalizeActionPositionKey(positionKey))) {
+      return position;
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeActionPositionKey(key: string) {
+  return key.trim().toLowerCase();
+}
+
+function getMacroPage(
+  macro: MacroTemplate,
+  actionPositions?: Record<string, DeckActionPosition> | null
+) {
+  const actionPosition = getMacroActionPosition(macro, actionPositions);
+
+  if (
+    typeof actionPosition?.page === "number" &&
+    Number.isFinite(actionPosition.page)
+  ) {
+    return Math.max(1, actionPosition.page);
+  }
+
   if (typeof macro.pageIndex === "number" && Number.isFinite(macro.pageIndex)) {
     return Math.max(1, macro.pageIndex + 1);
   }
@@ -454,6 +534,168 @@ function getMacroPage(macro: MacroTemplate) {
   }
 
   return 1;
+}
+
+function normalizeDeckCoordinate(value: number, max: number) {
+  if (!Number.isFinite(value)) {
+    return undefined;
+  }
+
+  if (value >= 1 && value <= max) {
+    return value;
+  }
+
+  if (value >= 0 && value < max) {
+    return value + 1;
+  }
+
+  return undefined;
+}
+
+function getMacroNumberField(macro: MacroTemplate, fieldName: string) {
+  const value = (macro as unknown as Record<string, unknown>)[fieldName];
+
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function getMacroCoordinateFields(macro: MacroTemplate) {
+  const row =
+    macro.row ??
+    macro.deckRow ??
+    macro.y ??
+    getMacroNumberField(macro, "buttonRow") ??
+    getMacroNumberField(macro, "positionRow");
+  const column =
+    macro.column ??
+    macro.deckColumn ??
+    macro.x ??
+    getMacroNumberField(macro, "buttonColumn") ??
+    getMacroNumberField(macro, "positionColumn");
+
+  return { column, row };
+}
+
+function getCellKeyFromCoordinates(
+  row: number | undefined,
+  column: number | undefined,
+  rows: number,
+  columns: number
+) {
+  if (typeof row !== "number" || typeof column !== "number") {
+    return undefined;
+  }
+
+  const normalizedRow = normalizeDeckCoordinate(row, rows);
+  const normalizedColumn = normalizeDeckCoordinate(column, columns);
+
+  if (!normalizedRow || !normalizedColumn) {
+    return undefined;
+  }
+
+  return `cell-${normalizedRow}-${normalizedColumn}`;
+}
+
+function getCellKeyFromLinearIndex(index: number, rows: number, columns: number) {
+  if (!Number.isFinite(index)) {
+    return undefined;
+  }
+
+  const totalCells = rows * columns;
+  const normalizedIndex =
+    index >= 0 && index < totalCells
+      ? index
+      : index >= 1 && index <= totalCells
+      ? index - 1
+      : undefined;
+
+  if (typeof normalizedIndex !== "number") {
+    return undefined;
+  }
+
+  const row = Math.floor(normalizedIndex / columns) + 1;
+  const column = (normalizedIndex % columns) + 1;
+
+  return `cell-${row}-${column}`;
+}
+
+function getCellKeyFromMacroKey(key: string, rows: number, columns: number) {
+  const normalizedKey = key.trim().toLowerCase();
+
+  if (!normalizedKey) {
+    return undefined;
+  }
+
+  const coordinateMatch = normalizedKey.match(
+    /(?:cell|key|button|btn)?[-_: ]*(\d+)[-_,:x ]+(\d+)/
+  );
+
+  if (coordinateMatch) {
+    return getCellKeyFromCoordinates(
+      Number(coordinateMatch[1]),
+      Number(coordinateMatch[2]),
+      rows,
+      columns
+    );
+  }
+
+  const linearMatch = normalizedKey.match(/^(?:cell|key|button|btn|slot)?[-_: ]*(\d+)$/);
+
+  if (linearMatch) {
+    return getCellKeyFromLinearIndex(Number(linearMatch[1]), rows, columns);
+  }
+
+  return normalizedKey;
+}
+
+function getMacroCellKey(
+  macro: MacroTemplate,
+  rows: number,
+  columns: number,
+  actionPositions?: Record<string, DeckActionPosition> | null
+) {
+  const actionPosition = getMacroActionPosition(macro, actionPositions);
+  const actionPositionCellKey = getCellKeyFromCoordinates(
+    actionPosition?.row,
+    actionPosition?.column,
+    rows,
+    columns
+  );
+
+  if (actionPositionCellKey) {
+    return actionPositionCellKey;
+  }
+
+  const coordinates = getMacroCoordinateFields(macro);
+  const coordinateCellKey = getCellKeyFromCoordinates(
+    coordinates.row,
+    coordinates.column,
+    rows,
+    columns
+  );
+
+  if (coordinateCellKey) {
+    return coordinateCellKey;
+  }
+
+  const linearIndex =
+    macro.index ??
+    macro.position ??
+    macro.slot ??
+    macro.buttonIndex ??
+    macro.deckIndex ??
+    getMacroNumberField(macro, "order");
+  const linearCellKey =
+    typeof linearIndex === "number"
+      ? getCellKeyFromLinearIndex(linearIndex, rows, columns)
+      : undefined;
+
+  if (linearCellKey) {
+    return linearCellKey;
+  }
+
+  return getCellKeyFromMacroKey(macro.key ?? "", rows, columns);
 }
 
 function getVolumeControllerPage(controller: VolumeController) {
@@ -524,6 +766,125 @@ function getObsAudioInputState(
     (inputState) =>
       normalizeAudioInputName(inputState.inputName) === normalizedInputName
   );
+}
+
+function withOptimisticAudioMuted(
+  obsSnapshot: ObsSnapshot | null,
+  inputName: string | undefined,
+  muted: boolean
+) {
+  const normalizedInputName = normalizeAudioInputName(inputName);
+
+  if (!normalizedInputName) {
+    return obsSnapshot;
+  }
+
+  const currentAudioInputStates = obsSnapshot?.audioInputStates ?? [];
+  const inputExists = currentAudioInputStates.some(
+    (inputState) =>
+      normalizeAudioInputName(inputState.inputName) === normalizedInputName
+  );
+  const audioInputStates = inputExists
+    ? currentAudioInputStates.map((inputState) =>
+        normalizeAudioInputName(inputState.inputName) === normalizedInputName
+          ? {
+              ...inputState,
+              muted,
+            }
+          : inputState
+      )
+    : [
+        ...currentAudioInputStates,
+        {
+          inputName: inputName?.trim() ?? "",
+          muted,
+        },
+      ];
+
+  return {
+    connected: obsSnapshot?.connected ?? true,
+    ...obsSnapshot,
+    audioInputStates,
+  };
+}
+
+function isObsSourceMacro(macro: MacroTemplate) {
+  return macro.actionType?.startsWith("obs-source") ?? false;
+}
+
+function getOptimisticSourceState(macro: MacroTemplate) {
+  if (!isObsSourceMacro(macro)) {
+    return undefined;
+  }
+
+  if (macro.actionType === "obs-source-show") {
+    return true;
+  }
+
+  if (macro.actionType === "obs-source-hide") {
+    return false;
+  }
+
+  if (typeof macro.deckStateActive === "boolean") {
+    return !macro.deckStateActive;
+  }
+
+  return undefined;
+}
+
+function applyMacroState(
+  macros: MacroTemplate[],
+  macroId: string,
+  deckStateActive: boolean
+) {
+  return macros.map((currentMacro) =>
+    currentMacro.id === macroId
+      ? {
+          ...currentMacro,
+          deckStateActive,
+        }
+      : currentMacro
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function getResponseSnapshot(value: unknown): ObsSnapshot | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const snapshot = value.obsSnapshot ?? value.snapshot ?? value.obs;
+
+  if (isRecord(snapshot)) {
+    return snapshot as ObsSnapshot;
+  }
+
+  if ("currentProgramSceneName" in value || "audioInputStates" in value) {
+    return value as ObsSnapshot;
+  }
+
+  return undefined;
+}
+
+function getResponseMacro(value: unknown): MacroTemplate | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const macro = value.macro ?? value.button ?? value.deckButton;
+
+  if (isRecord(macro)) {
+    return macro as MacroTemplate;
+  }
+
+  if ("deckStateActive" in value || "actionType" in value) {
+    return value as MacroTemplate;
+  }
+
+  return undefined;
 }
 
 function syncMacroWithObsAudioState(
@@ -675,7 +1036,7 @@ function getActionLabel(macro?: MacroTemplate) {
     return macro.obsSceneName?.trim() || "Cena";
   }
 
-  if (macro.actionType === "obs-source-visibility") {
+  if (isObsSourceMacro(macro)) {
     return macro.obsSourceName?.trim() || "Fonte";
   }
 
@@ -713,7 +1074,24 @@ function getImageSrc(macro?: MacroTemplate) {
 
 function DeckIcon({ macro }: { macro?: MacroTemplate }) {
   if (macro?.actionType === "obs-audio-mute") {
-    const Icon = macro.deckStateActive ? MicOff : Mic;
+    const normalizedIcon = macro.deckIcon?.trim().toLowerCase() ?? "";
+    const normalizedInputName = macro.obsAudioInputName?.trim().toLowerCase() ?? "";
+    const useVolumeIcon =
+      normalizedIcon.includes("volume") ||
+      normalizedIcon.includes("speaker") ||
+      normalizedIcon.includes("sound") ||
+      (!normalizedIcon.includes("microphone") &&
+        !normalizedIcon.includes("mic") &&
+        !normalizedInputName.includes("microfone") &&
+        !normalizedInputName.includes("microphone") &&
+        !normalizedInputName.includes("mic"));
+    const Icon = useVolumeIcon
+      ? macro.deckStateActive
+        ? VolumeX
+        : Volume2
+      : macro.deckStateActive
+      ? MicOff
+      : Mic;
 
     return <Icon className="size-14 sm:size-16" aria-hidden="true" />;
   }
@@ -1310,6 +1688,9 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   const [macroStateOverrides, setMacroStateOverrides] = useState<
     Record<string, TimedBooleanOverride>
   >({});
+  const [macroPressErrors, setMacroPressErrors] = useState<Record<string, number>>(
+    {}
+  );
   const [volumeOverrides, setVolumeOverrides] = useState<
     Record<string, TimedNumberOverride>
   >({});
@@ -1319,6 +1700,22 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   const columns = deck?.columns ?? fallbackColumns;
   const pageCount = getDeckPageCount(deck, fallbackPageCount);
   const hasMultiplePages = pageCount > 1;
+
+  const refreshObsSnapshot = useCallback(async () => {
+    const nextObsSnapshot = await apiGet<ObsSnapshot>("/obs/snapshot");
+
+    setObsSnapshot(nextObsSnapshot);
+  }, []);
+
+  const refreshDeckConfig = useCallback(async () => {
+    const [nextDecks, nextMacros] = await Promise.all([
+      apiGet<VirtualDeck[]>("/virtual-decks"),
+      apiGet<MacroTemplate[]>("/macros"),
+    ]);
+
+    setDecks(nextDecks);
+    setMacros(nextMacros);
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -1352,10 +1749,18 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     }
 
     void load();
-    const interval = window.setInterval(load, 3000);
+    const obsInterval = window.setInterval(() => {
+      void refreshObsSnapshot().catch(() => undefined);
+    }, OBS_SNAPSHOT_POLL_MS);
+    const deckConfigInterval = window.setInterval(() => {
+      void refreshDeckConfig().catch(() => undefined);
+    }, DECK_CONFIG_SYNC_MS);
 
-    return () => window.clearInterval(interval);
-  }, [load, loggedIn, profile]);
+    return () => {
+      window.clearInterval(obsInterval);
+      window.clearInterval(deckConfigInterval);
+    };
+  }, [load, loggedIn, profile, refreshDeckConfig, refreshObsSnapshot]);
 
   useScreenWakeLock(loggedIn);
 
@@ -1404,10 +1809,28 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   }
 
   const deckMacros = getDeckMacros(macros, deckId)
-    .filter((macro) => getMacroPage(macro) === currentPage)
+    .filter((macro) => getMacroPage(macro, deck?.actionPositions) === currentPage)
     .map((macro) =>
       syncMacroWithObsAudioState(macro, obsSnapshot, macroStateOverrides[macro.id])
+  );
+  const deckMacroByCellKey = new Map<string, MacroTemplate>();
+  const deckMacroCellPriority = new Map<string, number>();
+
+  for (const macro of deckMacros) {
+    const hasDesktopPosition = Boolean(
+      getMacroActionPosition(macro, deck?.actionPositions)
     );
+    const cellKey = getMacroCellKey(macro, rows, columns, deck?.actionPositions);
+    const priority = hasDesktopPosition ? 2 : 1;
+    const currentPriority = cellKey
+      ? deckMacroCellPriority.get(cellKey) ?? 0
+      : 0;
+
+    if (cellKey && priority >= currentPriority) {
+      deckMacroByCellKey.set(cellKey, macro);
+      deckMacroCellPriority.set(cellKey, priority);
+    }
+  }
   const volumeControllers = (deck?.volumeControllers ?? [])
     .filter((controller) => getVolumeControllerPage(controller) === currentPage)
     .map((controller) =>
@@ -1496,12 +1919,31 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   } as CSSProperties;
 
   async function runMacro(macro: MacroTemplate) {
+    const optimisticState: OptimisticMacroState = {};
+    const sourceState = getOptimisticSourceState(macro);
+
+    setMacroPressErrors((currentErrors) => {
+      const { [macro.id]: _removed, ...nextErrors } = currentErrors;
+
+      return nextErrors;
+    });
+
+    if (macro.actionType === "obs-scene" && macro.obsSceneName?.trim()) {
+      optimisticState.previousSceneName = activeSceneName;
+      setObsSnapshot((currentSnapshot) => ({
+        connected: currentSnapshot?.connected ?? true,
+        ...currentSnapshot,
+        currentProgramSceneName: macro.obsSceneName?.trim(),
+      }));
+    }
+
     if (macro.actionType === "obs-audio-mute") {
       const nextActive =
         typeof macro.obsAudioMuted === "boolean"
           ? macro.obsAudioMuted
           : !macro.deckStateActive;
 
+      optimisticState.previousActive = macro.deckStateActive;
       setMacroStateOverrides((currentOverrides) => ({
         ...currentOverrides,
         [macro.id]: {
@@ -1509,25 +1951,111 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
           value: nextActive,
         },
       }));
-      setMacros((currentMacros) =>
-        currentMacros.map((currentMacro) =>
-          currentMacro.id === macro.id
-            ? {
-                ...currentMacro,
-                deckStateActive: nextActive,
-              }
-            : currentMacro
+      setObsSnapshot((currentSnapshot) =>
+        withOptimisticAudioMuted(
+          currentSnapshot,
+          macro.obsAudioInputName,
+          nextActive
         )
+      );
+      setMacros((currentMacros) => applyMacroState(currentMacros, macro.id, nextActive));
+    }
+
+    if (typeof sourceState === "boolean") {
+      optimisticState.previousActive = macro.deckStateActive;
+      setMacros((currentMacros) =>
+        applyMacroState(currentMacros, macro.id, sourceState)
       );
     }
 
     try {
-      await fetch(`${getBackendUrl()}/macros/${macro.id}/run`, {
+      const response = await fetch(`${getBackendUrl()}/macros/${macro.id}/run`, {
         method: "POST",
       });
-      void load();
+
+      if (!response.ok) {
+        throw new Error(`API ${response.status}`);
+      }
+
+      const contentType = response.headers.get("content-type") ?? "";
+      const responseBody = contentType.includes("application/json")
+        ? ((await response.json()) as unknown)
+        : undefined;
+      const responseSnapshot = getResponseSnapshot(responseBody);
+      const responseMacro = getResponseMacro(responseBody);
+
+      if (responseSnapshot) {
+        setObsSnapshot(responseSnapshot);
+      }
+
+      if (typeof responseMacro?.deckStateActive === "boolean") {
+        const confirmedActive = responseMacro.deckStateActive;
+
+        setMacros((currentMacros) =>
+          applyMacroState(currentMacros, macro.id, confirmedActive)
+        );
+        if (macro.actionType === "obs-audio-mute") {
+          setMacroStateOverrides((currentOverrides) => ({
+            ...currentOverrides,
+            [macro.id]: {
+              updatedAt: Date.now(),
+              value: confirmedActive,
+            },
+          }));
+        }
+      }
     } catch (error) {
       console.error("Erro ao executar macro virtual:", error);
+      setMacroPressErrors((currentErrors) => ({
+        ...currentErrors,
+        [macro.id]: Date.now(),
+      }));
+
+      window.setTimeout(() => {
+        setMacroPressErrors((currentErrors) => {
+          if (!currentErrors[macro.id]) {
+            return currentErrors;
+          }
+
+          const { [macro.id]: _removed, ...nextErrors } = currentErrors;
+
+          return nextErrors;
+        });
+      }, BUTTON_ERROR_TTL_MS);
+
+      if (macro.actionType === "obs-scene") {
+        setObsSnapshot((currentSnapshot) => ({
+          connected: currentSnapshot?.connected ?? true,
+          ...currentSnapshot,
+          currentProgramSceneName: optimisticState.previousSceneName,
+        }));
+      }
+
+      if (
+        (macro.actionType === "obs-audio-mute" || typeof sourceState === "boolean") &&
+        typeof optimisticState.previousActive === "boolean"
+      ) {
+        const previousActive = optimisticState.previousActive;
+
+        setMacros((currentMacros) =>
+          applyMacroState(currentMacros, macro.id, previousActive)
+        );
+        setMacroStateOverrides((currentOverrides) => {
+          const { [macro.id]: _removed, ...nextOverrides } = currentOverrides;
+
+          return nextOverrides;
+        });
+
+        if (macro.actionType === "obs-audio-mute") {
+          setObsSnapshot((currentSnapshot) =>
+            withOptimisticAudioMuted(
+              currentSnapshot,
+              macro.obsAudioInputName,
+              previousActive
+            )
+          );
+        }
+      }
     }
   }
 
@@ -1568,7 +2096,6 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     try {
       updateVolumeController(controller.id, volume);
       await setVolumeControllerVolume(controller, volume);
-      void load();
     } catch (error) {
       console.error("Erro ao ajustar volume virtual:", error);
     }
@@ -1705,19 +2232,36 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
 
                 <div className="grid place-content-center" style={gridStyle}>
                   {cells.map((cell) => {
-                    const macro = deckMacros.find(
-                      (item) => item.key.toLowerCase() === cell.key.toLowerCase()
-                    );
+                    const macro = deckMacroByCellKey.get(cell.key);
                     const imageSrc = getImageSrc(macro);
                     const isActiveScene = isActiveSceneMacro(macro, activeSceneName);
+                    const isStateActive = Boolean(
+                      macro &&
+                        macro.actionType !== "obs-scene" &&
+                        (macro.actionType === "obs-audio-mute" ||
+                          isObsSourceMacro(macro)) &&
+                        macro.deckStateActive
+                    );
+                    const hasPressError = Boolean(
+                      macro && macroPressErrors[macro.id]
+                    );
 
                     return (
                       <button
                         key={cell.key}
                         aria-disabled={!macro}
+                        aria-pressed={
+                          macro?.actionType === "obs-scene" ||
+                          macro?.actionType === "obs-audio-mute" ||
+                          (macro && isObsSourceMacro(macro))
+                            ? Boolean(isActiveScene || macro?.deckStateActive)
+                            : undefined
+                        }
                         className={[
-                          "group relative flex size-full aspect-square touch-manipulation flex-col items-center justify-center gap-3 overflow-hidden rounded-4xl border-2 bg-[#181E23] p-3 text-center transition",
-                          isActiveScene
+                          "group relative flex size-full aspect-square touch-manipulation flex-col items-center justify-center gap-3 overflow-hidden rounded-4xl border-2 bg-[#181E23] p-3 text-center transition active:scale-[0.98]",
+                          hasPressError
+                            ? "border-[#ff5b7a] shadow-[0_0_0_2px_rgba(255,91,122,0.25),0_0_24px_rgba(255,91,122,0.2)]"
+                            : isActiveScene || isStateActive
                             ? "border-[#00b4ff] shadow-[0_0_0_2px_rgba(0,180,255,0.28),0_0_28px_rgba(0,180,255,0.18)]"
                             : "border-[#3B424C]",
                         ].join(" ")}

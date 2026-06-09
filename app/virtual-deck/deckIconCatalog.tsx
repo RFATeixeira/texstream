@@ -80,11 +80,11 @@ function ObsIcon({ size = 16, ...props }: IconProps) {
 const deckIconOptions: DeckIconOption[] = [
   { id: "auto", icon: FaKeyboard },
   { id: "obs", icon: ObsIcon },
-  { id: "FaMicrophone", icon: FaMicrophone, aliases: ["microphone"] },
+  { id: "FaMicrophone", icon: FaMicrophone, aliases: ["microphone", "mic"] },
   {
     id: "FaMicrophoneSlash",
     icon: FaMicrophoneSlash,
-    aliases: ["microphone-muted", "mic-off"],
+    aliases: ["microphone-muted", "microphone-slash", "mic-off", "mic-muted"],
   },
   { id: "FaEye", icon: FaEye, aliases: ["eye"] },
   { id: "FaEyeSlash", icon: FaEyeSlash, aliases: ["eye-off"] },
@@ -92,12 +92,20 @@ const deckIconOptions: DeckIconOption[] = [
   { id: "FaPlay", icon: FaPlay, aliases: ["play"] },
   { id: "FaPause", icon: FaPause, aliases: ["pause"] },
   { id: "FaStop", icon: FaStop, aliases: ["stop"] },
-  { id: "FaVolumeUp", icon: FaVolumeUp, aliases: ["volume"] },
-  { id: "FaVolumeMute", icon: FaVolumeMute, aliases: ["volume-muted"] },
+  {
+    id: "FaVolumeUp",
+    icon: FaVolumeUp,
+    aliases: ["volume", "volume-up", "volume-high", "sound", "speaker"],
+  },
+  {
+    id: "FaVolumeMute",
+    icon: FaVolumeMute,
+    aliases: ["volume-muted", "volume-mute", "volume-off", "volume-xmark", "sound-off"],
+  },
   { id: "FaCamera", icon: FaCamera, aliases: ["camera"] },
   { id: "FaVideo", icon: FaVideo, aliases: ["video"] },
   { id: "FaVideoSlash", icon: FaVideoSlash, aliases: ["video-off"] },
-  { id: "FaDesktop", icon: FaDesktop, aliases: ["monitor"] },
+  { id: "FaDesktop", icon: FaDesktop, aliases: ["monitor", "display", "screen"] },
   {
     id: "FaGamepad",
     icon: FaGamepad,
@@ -107,7 +115,7 @@ const deckIconOptions: DeckIconOption[] = [
   { id: "FaBell", icon: FaBell, aliases: ["bell"] },
   { id: "FaMusic", icon: FaMusic, aliases: ["music"] },
   { id: "FaImage", icon: FaImage, aliases: ["image"] },
-  { id: "FaGlobe", icon: FaGlobe, aliases: ["browser"] },
+  { id: "FaGlobe", icon: FaGlobe, aliases: ["browser", "globe", "web"] },
   { id: "FaCog", icon: FaCog, aliases: ["settings"] },
   { id: "FaStar", icon: FaStar, aliases: ["star"] },
   { id: "FaHeart", icon: FaHeart, aliases: ["heart"] },
@@ -130,17 +138,28 @@ const deckIconById = new Map<string, DeckIconOption>();
 for (const option of deckIconOptions) {
   deckIconById.set(option.id, option);
   deckIconById.set(option.id.toLowerCase(), option);
+  deckIconById.set(normalizeIconLookupKey(option.id), option);
 
   for (const alias of option.aliases ?? []) {
     deckIconById.set(alias.toLowerCase(), option);
+    deckIconById.set(normalizeIconLookupKey(alias), option);
   }
+}
+
+function normalizeIconLookupKey(iconId: string) {
+  return iconId.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 function resolveDeckIconId(iconId?: string, actionType?: string) {
   const normalizedIconId = iconId?.toLowerCase().trim() || "auto";
+  const compactIconId = normalizeIconLookupKey(iconId?.trim() || "auto");
 
   if (normalizedIconId !== "auto" && deckIconById.has(normalizedIconId)) {
     return deckIconById.get(normalizedIconId)?.id ?? "FaKeyboard";
+  }
+
+  if (compactIconId !== "auto" && deckIconById.has(compactIconId)) {
+    return deckIconById.get(compactIconId)?.id ?? "FaKeyboard";
   }
 
   if (actionType?.startsWith("obs-")) {
