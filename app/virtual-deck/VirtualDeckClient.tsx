@@ -1235,9 +1235,8 @@ function VolumeControllerTile({
 
   const muteButton = showMuteButton ? (
     <button
-      aria-label={`${muted ? "Desmutar" : "Mutar"} ${
-        controller.name || controller.inputName || "Volume"
-      }`.trim()}
+      aria-label={`${muted ? "Desmutar" : "Mutar"} ${controller.name || controller.inputName || "Volume"
+        }`.trim()}
       aria-pressed={muted}
       className={[
         "relative z-20 flex shrink-0 items-center justify-center rounded-2xl border-2 border-[#3B424C] bg-[#1B242E] transition active:scale-95",
@@ -1299,7 +1298,9 @@ function VolumeControllerTile({
       <div
         className={[
           "relative flex min-w-0 items-center justify-center",
-          isVertical ? "min-h-0 w-full flex-1" : "flex-1 gap-3",
+          isVertical
+            ? "min-h-0 w-full flex-1 flex-col gap-3"
+            : "flex-1 flex-row gap-3",
         ].join(" ")}
       >
         {!isVertical && muteButton}
@@ -1313,9 +1314,8 @@ function VolumeControllerTile({
           ].join(" ")}
         >
           <input
-            aria-label={`Volume ${
-              controller.name || controller.inputName || ""
-            }`.trim()}
+            aria-label={`Volume ${controller.name || controller.inputName || ""
+              }`.trim()}
             className={[
               "virtual-volume-range",
               isVertical
