@@ -79,7 +79,7 @@ select {
   appearance: none;
   width: 48px;
   height: 48px;
-  margin-top: -14px;
+  margin-top: 0px;
   border-radius: 999px;
   background: #00b4ff;
   border: 4px solid #12161c;

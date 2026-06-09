@@ -51,8 +51,8 @@ type VolumeController = {
   id: string;
   name: string;
   inputName: string;
-  orientation: "horizontal" | "vertical";
-  position?: "top" | "right" | "bottom" | "left" | string;
+  orientation?: "horizontal" | "vertical";
+  position?: "left" | "right" | string;
   page?: number;
   row: number;
   column: number;
@@ -713,42 +713,8 @@ function getVolumeControllerPage(controller: VolumeController) {
   return Math.max(1, Number(controller.page) || 1);
 }
 
-function getVolumeControllerCell(controller: VolumeController, rows: number, columns: number) {
-  const position = controller.position?.toLowerCase();
-  let row = Math.min(rows, Math.max(1, Number(controller.row) || 1));
-  let column = Math.min(columns, Math.max(1, Number(controller.column) || 1));
-
-  if (controller.orientation === "vertical") {
-    if (position === "left") {
-      column = 1;
-    }
-
-    if (position === "right") {
-      column = columns;
-    }
-  }
-
-  if (controller.orientation === "horizontal") {
-    if (position === "top") {
-      row = 1;
-    }
-
-    if (position === "bottom") {
-      row = rows;
-    }
-  }
-
-  return { row, column };
-}
-
 function getVolumeControllerSide(controller: VolumeController) {
-  const position = controller.position?.toLowerCase();
-
-  if (controller.orientation === "vertical") {
-    return position === "left" ? "left" : "right";
-  }
-
-  return position === "top" ? "top" : "bottom";
+  return controller.position?.toLowerCase() === "left" ? "left" : "right";
 }
 
 function clampVolume(volume: number) {
@@ -1212,7 +1178,6 @@ function VolumeControllerTile({
   style?: CSSProperties;
 }) {
   const volume = clampVolume(Number(controller.volume) || 0);
-  const isVertical = controller.orientation === "vertical";
   const showMuteButton = shouldShowVolumeMuteButton(controller);
   const muted = Boolean(controller.muted);
 
@@ -1224,6 +1189,8 @@ function VolumeControllerTile({
     normalizedControllerName.includes("microfone") ||
     normalizedControllerName.includes("microphone") ||
     normalizedControllerName.includes("mic");
+
+  const MainIcon = useMicIcon ? FaMicrophone : FaVolumeUp;
 
   const MuteIcon = useMicIcon
     ? muted
@@ -1239,8 +1206,7 @@ function VolumeControllerTile({
         }`.trim()}
       aria-pressed={muted}
       className={[
-        "relative z-20 flex shrink-0 items-center justify-center rounded-2xl border-2 border-[#3B424C] bg-[#1B242E] transition active:scale-95",
-        isVertical ? "h-16 w-full" : "h-full min-h-12 w-16",
+        "relative z-20 flex h-16 w-full shrink-0 items-center justify-center rounded-2xl border-2 border-[#3B424C] bg-[#1B242E] transition active:scale-95",
         muted ? "border-[#ff5b7a] text-[#ff5b7a]" : "text-[#3A93F5]",
       ].join(" ")}
       onClick={(event) => {
@@ -1252,17 +1218,14 @@ function VolumeControllerTile({
       title={muted ? "Desmutar" : "Mutar"}
       type="button"
     >
-      <MuteIcon className={isVertical ? "size-9" : "size-7"} aria-hidden="true" />
+      <MuteIcon className="size-9" aria-hidden="true" />
     </button>
   ) : null;
 
   return (
     <div
       className={[
-        "relative flex overflow-hidden rounded-4xl border-2 border-[#3B424C] bg-[#181E23] p-3",
-        isVertical
-          ? "min-h-0 flex-col items-stretch gap-3"
-          : "min-w-0 items-center gap-3",
+        "relative flex h-full min-h-0 w-full flex-col items-center gap-3 overflow-hidden rounded-4xl border-2 border-[#3B424C] bg-[#181E23] p-3",
         className,
       ].join(" ")}
       onClick={(event) => event.stopPropagation()}
@@ -1270,23 +1233,18 @@ function VolumeControllerTile({
       onTouchEnd={(event) => event.stopPropagation()}
       style={style}
     >
-      <div
-        className={[
-          "relative z-20 flex min-w-0 shrink-0 items-center gap-2",
-          isVertical ? "w-full flex-col text-center" : "basis-[34%]",
-        ].join(" ")}
-      >
+      <div className="relative z-20 flex w-full shrink-0 flex-col items-center gap-2 text-center">
         <div
           className={[
             "flex size-11 shrink-0 items-center justify-center rounded-2xl bg-[#1B242E]",
             muted ? "text-[#ff5b7a]" : "text-[#3A93F5]",
           ].join(" ")}
         >
-          <MuteIcon className="size-6" aria-hidden="true" />
+          <MainIcon className="size-6" aria-hidden="true" />
         </div>
 
-        <div className="min-w-0">
-          <div className="truncate text-sm font-bold text-white">
+        <div className="min-w-0 max-w-full">
+          <div className="max-w-full truncate text-sm font-bold text-white">
             {controller.name || controller.inputName || "Volume"}
           </div>
           <div className="mt-1 truncate text-xs font-semibold text-[#8E949C]">
@@ -1295,54 +1253,36 @@ function VolumeControllerTile({
         </div>
       </div>
 
-      <div
-        className={[
-          "relative flex min-w-0 items-center justify-center",
-          isVertical
-            ? "min-h-0 w-full flex-1 flex-col gap-3"
-            : "flex-1 flex-row gap-3",
-        ].join(" ")}
-      >
-        {!isVertical && muteButton}
-
-        <div
-          className={[
-            "relative flex items-center justify-center overflow-hidden",
-            isVertical
-              ? "min-h-0 w-full flex-1 rounded-2xl px-2 py-6"
-              : "min-w-0 flex-1",
-          ].join(" ")}
-        >
-          <input
-            aria-label={`Volume ${controller.name || controller.inputName || ""
-              }`.trim()}
-            className={[
-              "virtual-volume-range",
-              isVertical
-                ? "virtual-volume-range-vertical absolute z-0"
-                : "virtual-volume-range-horizontal w-full",
-            ].join(" ")}
-            max={100}
-            min={0}
-            onChange={(event) =>
-              onVolumeChange(controller.id, clampVolume(Number(event.target.value)))
-            }
-            onKeyUp={(event) =>
-              onCommit(controller, clampVolume(Number(event.currentTarget.value)))
-            }
-            onPointerUp={(event) =>
-              onCommit(controller, clampVolume(Number(event.currentTarget.value)))
-            }
-            onTouchEnd={(event) =>
-              onCommit(controller, clampVolume(Number(event.currentTarget.value)))
-            }
-            type="range"
-            value={volume}
-          />
-        </div>
-
-        {isVertical && muteButton}
+      <div className="relative min-h-0 w-full flex-1 overflow-hidden rounded-2xl">
+        <input
+          aria-label={`Volume ${controller.name || controller.inputName || ""
+            }`.trim()}
+          className="virtual-volume-range virtual-volume-range-vertical absolute left-1/2 top-0 h-[calc(100%-1.5rem)] w-10 accent-[#3A93F5]"
+          max={100}
+          min={0}
+          onChange={(event) =>
+            onVolumeChange(controller.id, clampVolume(Number(event.target.value)))
+          }
+          onKeyUp={(event) =>
+            onCommit(controller, clampVolume(Number(event.currentTarget.value)))
+          }
+          onPointerUp={(event) =>
+            onCommit(controller, clampVolume(Number(event.currentTarget.value)))
+          }
+          onTouchEnd={(event) =>
+            onCommit(controller, clampVolume(Number(event.currentTarget.value)))
+          }
+          style={{
+            writingMode: "vertical-lr",
+            transform: "translateX(-50%) rotate(180deg)",
+            height: "100%",
+          } as CSSProperties}
+          type="range"
+          value={volume}
+        />
       </div>
+
+      {muteButton}
     </div>
   );
 }
@@ -1952,14 +1892,8 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
       )
     );
   const activeSceneName = obsSnapshot?.currentProgramSceneName ?? "";
-  const topVolumeControllers = volumeControllers.filter(
-    (controller) => getVolumeControllerSide(controller) === "top"
-  );
   const rightVolumeControllers = volumeControllers.filter(
     (controller) => getVolumeControllerSide(controller) === "right"
-  );
-  const bottomVolumeControllers = volumeControllers.filter(
-    (controller) => getVolumeControllerSide(controller) === "bottom"
   );
   const leftVolumeControllers = volumeControllers.filter(
     (controller) => getVolumeControllerSide(controller) === "left"
@@ -1984,24 +1918,15 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     Math.max(0, rightVolumeControllers.length - 1) +
     (leftVolumeControllers.length ? 1 : 0) +
     (rightVolumeControllers.length ? 1 : 0);
-  const stackedControlCount =
-    (topVolumeControllers.length ? 1 : 0) +
-    (bottomVolumeControllers.length ? 1 : 0);
-  const stackedControlGapCount =
-    (topVolumeControllers.length ? 1 : 0) +
-    (bottomVolumeControllers.length ? 1 : 0);
   const gridStyle = {
     "--deck-columns": columns,
     "--deck-rows": rows,
     "--deck-gap": `clamp(0.45rem, calc(2rem - ${gapReduction}rem), 2rem)`,
     "--volume-control-size": "clamp(7rem, 16cqw, 11rem)",
-    "--volume-horizontal-control-size": "clamp(4.75rem, 10cqw, 6.5rem)",
     "--deck-side-control-count": sideControlCount,
     "--deck-side-control-gap-count": sideControlGapCount,
-    "--deck-stacked-control-count": stackedControlCount,
-    "--deck-stacked-control-gap-count": stackedControlGapCount,
     "--deck-cell-size":
-      "min(calc((100cqw - var(--deck-side-control-count) * var(--volume-control-size) - var(--deck-side-control-gap-count) * var(--deck-gap) - (var(--deck-columns) - 1) * var(--deck-gap)) / var(--deck-columns)), calc((100cqh - var(--deck-stacked-control-count) * var(--volume-horizontal-control-size) - var(--deck-stacked-control-gap-count) * var(--deck-gap) - (var(--deck-rows) - 1) * var(--deck-gap)) / var(--deck-rows)))",
+      "min(calc((100cqw - var(--deck-side-control-count) * var(--volume-control-size) - var(--deck-side-control-gap-count) * var(--deck-gap) - (var(--deck-columns) - 1) * var(--deck-gap)) / var(--deck-columns)), calc((100cqh - (var(--deck-rows) - 1) * var(--deck-gap)) / var(--deck-rows)))",
     gap: "var(--deck-gap)",
     gridTemplateColumns: `repeat(${columns}, var(--deck-cell-size))`,
     gridTemplateRows: `repeat(${rows}, var(--deck-cell-size))`,
@@ -2014,21 +1939,6 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
       "calc(var(--deck-rows) * var(--deck-cell-size) + (var(--deck-rows) - 1) * var(--deck-gap))",
   } as CSSProperties & Record<string, string | number>;
   const deckGapStyle = { gap: "var(--deck-gap)" } as CSSProperties;
-  const stackedControlsStyle = {
-    gap: "var(--deck-gap)",
-    width: "var(--deck-grid-width)",
-  } as CSSProperties;
-  const topStackedControlsStyle = {
-    ...stackedControlsStyle,
-    gridTemplateColumns: `repeat(${topVolumeControllers.length}, minmax(0, 1fr))`,
-  } as CSSProperties;
-  const bottomStackedControlsStyle = {
-    ...stackedControlsStyle,
-    gridTemplateColumns: `repeat(${bottomVolumeControllers.length}, minmax(0, 1fr))`,
-  } as CSSProperties;
-  const horizontalControlStyle = {
-    height: "var(--volume-horizontal-control-size)",
-  } as CSSProperties;
   const sideControlsStyle = {
     gap: "var(--deck-gap)",
     height: "var(--deck-grid-height)",
@@ -2371,28 +2281,6 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
               className="flex flex-col items-center justify-center"
               style={deckFrameStyle}
             >
-              {topVolumeControllers.length > 0 && (
-                <div
-                  className="grid"
-                  style={topStackedControlsStyle}
-                >
-                  {topVolumeControllers.map((controller) => (
-                    <VolumeControllerTile
-                      key={controller.id}
-                      className="w-full"
-                      controller={controller}
-                      onCommit={(nextController, volume) =>
-                        void commitVolumeController(nextController, volume)
-                      }
-                      onVolumeChange={updateVolumeController}
-                      style={horizontalControlStyle}
-                      onMuteToggle={(nextController) => {
-                        void toggleVolumeControllerMute(nextController);
-                      }}
-                    />
-                  ))}
-                </div>
-              )}
 
               <div
                 className="flex items-center justify-center"
@@ -2508,36 +2396,13 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
                   </div>
                 )}
               </div>
-
-              {bottomVolumeControllers.length > 0 && (
-                <div
-                  className="grid"
-                  style={bottomStackedControlsStyle}
-                >
-                  {bottomVolumeControllers.map((controller) => (
-                    <VolumeControllerTile
-                      key={controller.id}
-                      className="w-full"
-                      controller={controller}
-                      onCommit={(nextController, volume) =>
-                        void commitVolumeController(nextController, volume)
-                      }
-                      onVolumeChange={updateVolumeController}
-                      style={horizontalControlStyle}
-                      onMuteToggle={(nextController) => {
-                        void toggleVolumeControllerMute(nextController);
-                      }}
-                    />
-                  ))}
-                </div>
-              )}
             </div>
           </div>
 
           {hasMultiplePages && (
             <div
               aria-label={`Pagina ${currentPage} de ${pageCount}`}
-              className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-[#181E24]/85 px-3 py-2 backdrop-blur sm:bottom-4"
+              className="absolute bottom-3 left-1/2 z-20 flex items-center gap-2 rounded-full bg-[#181E24]/85 px-3 py-2 backdrop-blur sm:bottom-4"
             >
               {Array.from({ length: pageCount }, (_, index) => {
                 const page = index + 1;
