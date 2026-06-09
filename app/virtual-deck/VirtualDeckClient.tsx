@@ -1874,10 +1874,9 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     (leftVolumeControllers.length ? 1 : 0) +
     (rightVolumeControllers.length ? 1 : 0);
   const stackedControlCount =
-    topVolumeControllers.length + bottomVolumeControllers.length;
+    (topVolumeControllers.length ? 1 : 0) +
+    (bottomVolumeControllers.length ? 1 : 0);
   const stackedControlGapCount =
-    Math.max(0, topVolumeControllers.length - 1) +
-    Math.max(0, bottomVolumeControllers.length - 1) +
     (topVolumeControllers.length ? 1 : 0) +
     (bottomVolumeControllers.length ? 1 : 0);
   const gridStyle = {
@@ -1885,12 +1884,13 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     "--deck-rows": rows,
     "--deck-gap": `clamp(0.45rem, calc(2rem - ${gapReduction}rem), 2rem)`,
     "--volume-control-size": "clamp(7rem, 16cqw, 11rem)",
+    "--volume-horizontal-control-size": "clamp(4.75rem, 10cqw, 6.5rem)",
     "--deck-side-control-count": sideControlCount,
     "--deck-side-control-gap-count": sideControlGapCount,
     "--deck-stacked-control-count": stackedControlCount,
     "--deck-stacked-control-gap-count": stackedControlGapCount,
     "--deck-cell-size":
-      "min(calc((100cqw - var(--deck-side-control-count) * var(--volume-control-size) - var(--deck-side-control-gap-count) * var(--deck-gap) - (var(--deck-columns) - 1) * var(--deck-gap)) / var(--deck-columns)), calc((100cqh - var(--deck-stacked-control-count) * var(--volume-control-size) - var(--deck-stacked-control-gap-count) * var(--deck-gap) - (var(--deck-rows) - 1) * var(--deck-gap)) / var(--deck-rows)))",
+      "min(calc((100cqw - var(--deck-side-control-count) * var(--volume-control-size) - var(--deck-side-control-gap-count) * var(--deck-gap) - (var(--deck-columns) - 1) * var(--deck-gap)) / var(--deck-columns)), calc((100cqh - var(--deck-stacked-control-count) * var(--volume-horizontal-control-size) - var(--deck-stacked-control-gap-count) * var(--deck-gap) - (var(--deck-rows) - 1) * var(--deck-gap)) / var(--deck-rows)))",
     gap: "var(--deck-gap)",
     gridTemplateColumns: `repeat(${columns}, var(--deck-cell-size))`,
     gridTemplateRows: `repeat(${rows}, var(--deck-cell-size))`,
@@ -1907,8 +1907,16 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     gap: "var(--deck-gap)",
     width: "var(--deck-grid-width)",
   } as CSSProperties;
+  const topStackedControlsStyle = {
+    ...stackedControlsStyle,
+    gridTemplateColumns: `repeat(${topVolumeControllers.length}, minmax(0, 1fr))`,
+  } as CSSProperties;
+  const bottomStackedControlsStyle = {
+    ...stackedControlsStyle,
+    gridTemplateColumns: `repeat(${bottomVolumeControllers.length}, minmax(0, 1fr))`,
+  } as CSSProperties;
   const horizontalControlStyle = {
-    height: "var(--volume-control-size)",
+    height: "var(--volume-horizontal-control-size)",
   } as CSSProperties;
   const sideControlsStyle = {
     gap: "var(--deck-gap)",
@@ -2194,7 +2202,7 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
               {topVolumeControllers.length > 0 && (
                 <div
                   className="grid"
-                  style={stackedControlsStyle}
+                  style={topStackedControlsStyle}
                 >
                   {topVolumeControllers.map((controller) => (
                     <VolumeControllerTile
@@ -2323,7 +2331,7 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
               {bottomVolumeControllers.length > 0 && (
                 <div
                   className="grid"
-                  style={stackedControlsStyle}
+                  style={bottomStackedControlsStyle}
                 >
                   {bottomVolumeControllers.map((controller) => (
                     <VolumeControllerTile
