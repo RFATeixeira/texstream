@@ -26,7 +26,7 @@ import {
   FaVolumeUp,
 } from "react-icons/fa";
 import type { CSSProperties, ReactNode, SVGProps } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getFirebaseAuth, isFirebaseConfigured } from "../../lib/firebase";
 import { renderDeckIcon } from "./deckIconCatalog";
 
@@ -67,6 +67,16 @@ type VolumeController = {
   muted?: boolean;
 };
 
+type ObsMovePosition = {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  durationMs: number;
+};
+
 type MacroTemplate = {
   id: string;
   name: string;
@@ -99,6 +109,10 @@ type MacroTemplate = {
   pageIndex?: number;
   pageNumber?: number;
   deckPage?: number;
+  obsMoveSceneName?: string;
+  obsMoveSourceName?: string;
+  obsMovePositions?: ObsMovePosition[];
+  obsMoveCurrentPositionId?: string;
 };
 
 type ObsAudioInputState = {
@@ -1047,6 +1061,10 @@ function getActionLabel(macro?: MacroTemplate) {
     return macro.obsSceneName?.trim() || "Cena";
   }
 
+  if (macro.actionType === "obs-source-move") {
+    return macro.deckTitle?.trim() || macro.obsMoveSourceName?.trim() || "Mover Fonte";
+  }
+
   if (isObsSourceMacro(macro)) {
     return macro.obsSourceName?.trim() || "Fonte";
   }
@@ -1694,6 +1712,141 @@ export function VirtualDeckHome() {
   );
 }
 
+function MoveSourceWebActionModal({
+  macro,
+  onClose,
+}: {
+  macro: MacroTemplate;
+  onClose: () => void;
+}) {
+  const canvasWidth = 1920;
+const canvasHeight = 1080;
+const positions = macro.obsMovePositions ?? [];
+
+const previewRef = useRef<HTMLDivElement | null>(null);
+const [previewSize, setPreviewSize] = useState({
+  width: 1920,
+  height: 1080,
+});
+
+const scaleX = previewSize.width / canvasWidth;
+const scaleY = previewSize.height / canvasHeight;
+
+useEffect(() => {
+  function updateSize() {
+    const element = previewRef.current;
+
+    if (!element) {
+      return;
+    }
+
+    const bounds = element.getBoundingClientRect();
+
+    setPreviewSize({
+      width: bounds.width,
+      height: bounds.height,
+    });
+  }
+
+  updateSize();
+
+  const element = previewRef.current;
+
+  if (!element) {
+    return;
+  }
+
+  const observer = new ResizeObserver(updateSize);
+  observer.observe(element);
+
+  window.addEventListener("resize", updateSize);
+
+  return () => {
+    observer.disconnect();
+    window.removeEventListener("resize", updateSize);
+  };
+}, []);
+
+  async function moveToPosition(position: ObsMovePosition) {
+    try {
+      const response = await fetch(`${getBackendUrl()}/obs/source-move`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sceneName: macro.obsMoveSceneName ?? "",
+          sourceName: macro.obsMoveSourceName ?? "",
+          positionId: position.id,
+          positionName: position.name,
+          x: position.x,
+          y: position.y,
+          width: position.width,
+          height: position.height,
+          durationMs: position.durationMs,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API ${response.status}`);
+      }
+
+      onClose();
+    } catch (error) {
+      console.error("Erro ao mover fonte OBS:", error);
+    }
+  }
+
+  return (
+  <div className="fixed inset-0 z-50 flex h-dvh w-dvw flex-col bg-[#12161C] text-white">
+    <button
+      type="button"
+      onClick={onClose}
+      aria-label="Fechar"
+      className="absolute left-4 top-4 z-30 flex size-12 items-center justify-center rounded-full bg-[#181E24] text-2xl font-bold text-white shadow-xl transition active:scale-95"
+    >
+      ×
+    </button>
+
+    <div className="flex h-full w-full items-center justify-center">
+      <div
+        ref={previewRef}
+        className="relative overflow-hidden "
+        style={{
+          width: "min(100dvw, calc(100dvh * 16 / 9))",
+          height: "min(100dvh, calc(100dvw * 9 / 16))",
+        }}
+      >
+        {positions.map((position) => (
+          <button
+            key={position.id}
+            type="button"
+            onClick={() => void moveToPosition(position)}
+            className="absolute rounded-xl border-2 border-[#55A8FF] bg-[#55A8FF]/25 text-left transition active:scale-95"
+            style={{
+              left: `${position.x * scaleX}px`,
+              top: `${position.y * scaleY}px`,
+              width: `${position.width * scaleX}px`,
+              height: `${position.height * scaleY}px`,
+            }}
+          >
+            <span className="absolute left-2 top-1 text-[10px] font-bold text-white sm:text-xs">
+              {position.name}
+            </span>
+          </button>
+        ))}
+
+        {positions.length === 0 && (
+          <div className="flex h-full items-center justify-center px-6 text-center text-sm text-slate-400">
+            Nenhuma posição cadastrada para essa fonte.
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+);
+}
+
 export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   const [profile, syncProfile] = useSyncedUserProfile();
   const params = useMemo(() => {
@@ -1736,6 +1889,7 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   const [hasCheckedDesktopSession, setHasCheckedDesktopSession] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const [moveActionMacro, setMoveActionMacro] = useState<MacroTemplate | null>(null);
   const [macroStateOverrides, setMacroStateOverrides] = useState<
     Record<string, TimedBooleanOverride>
   >({});
@@ -1948,6 +2102,10 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
   } as CSSProperties;
 
   async function runMacro(macro: MacroTemplate) {
+    if (macro.actionType === "obs-source-move") {
+      setMoveActionMacro(macro);
+      return;
+    }
     const optimisticState: OptimisticMacroState = {};
     const sourceState = getOptimisticSourceState(macro);
 
@@ -2427,6 +2585,12 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
           )}
         </section>
       </div>
+      {moveActionMacro && (
+        <MoveSourceWebActionModal
+          macro={moveActionMacro}
+          onClose={() => setMoveActionMacro(null)}
+        />
+      )}
     </main>
   );
 }
