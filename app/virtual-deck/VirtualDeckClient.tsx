@@ -109,6 +109,7 @@ type MacroTemplate = {
   pageIndex?: number;
   pageNumber?: number;
   deckPage?: number;
+  obsMoveLinkedSceneNames?: string[];
   obsMoveSceneName?: string;
   obsMoveSourceName?: string;
   obsMovePositions?: ObsMovePosition[];
@@ -1783,6 +1784,7 @@ useEffect(() => {
           y: position.y,
           width: position.width,
           height: position.height,
+          linkedSceneNames: macro.obsMoveLinkedSceneNames ?? [],
           durationMs: position.durationMs,
         }),
       });
@@ -2158,7 +2160,11 @@ export function VirtualDeckTouch({ deckId }: { deckId: string }) {
     }
 
     try {
-      const response = await fetch(`${getBackendUrl()}/macros/${macro.id}/run`, {
+      const response = await fetch(`${getBackendUrl()}/macros/run`, {
+        body: JSON.stringify(macro),
+        headers: {
+          "Content-Type": "application/json",
+        },
         method: "POST",
       });
 
