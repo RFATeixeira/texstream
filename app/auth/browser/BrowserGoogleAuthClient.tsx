@@ -1,11 +1,12 @@
 "use client";
 
 import {
+  getRedirectResult,
   GoogleAuthProvider,
-  signInWithPopup,
+  signInWithRedirect,
 } from "firebase/auth";
 import { LoaderCircle } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getFirebaseAuth, isFirebaseConfigured } from "../../../lib/firebase";
 
 function TextreamLogoIcon({ size = 36 }: { size?: number }) {
@@ -37,28 +38,37 @@ function TextreamLogoIcon({ size = 36 }: { size?: number }) {
 
 export function BrowserGoogleAuthClient() {
   const [message, setMessage] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const hasStartedLogin = useRef(false);
 
-  async function signInAndReturnCredential() {
-    if (isSubmitting) {
-      return;
-    }
+  useEffect(() => {
+    async function signInAndReturnCredential() {
+      if (hasStartedLogin.current) {
+        return;
+      }
 
-    setIsSubmitting(true);
-    setMessage("");
+      hasStartedLogin.current = true;
+      setMessage("Abrindo login com Google...");
 
-    try {
+      const callbackUrl =
+        new URLSearchParams(window.location.search).get("callback") ||
+        window.sessionStorage.getItem("textream-browser-auth-callback");
+
+      if (callbackUrl) {
+        window.sessionStorage.setItem(
+          "textream-browser-auth-callback",
+          callbackUrl
+        );
+      }
+
+      if (!callbackUrl) {
+        setMessage("Callback local nao encontrado.");
+        return;
+      }
+
       const auth = getFirebaseAuth();
 
       if (!auth || !isFirebaseConfigured) {
         setMessage("Firebase nao configurado.");
-        return;
-      }
-
-      const callbackUrl = new URLSearchParams(window.location.search).get("callback");
-
-      if (!callbackUrl) {
-        setMessage("Callback local nao encontrado.");
         return;
       }
 
@@ -67,32 +77,43 @@ export function BrowserGoogleAuthClient() {
         prompt: "select_account",
       });
 
-      const result = await signInWithPopup(auth, provider);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
+      try {
+        const result = await getRedirectResult(auth);
 
-      if (!credential?.accessToken && !credential?.idToken) {
-        setMessage("Credencial Google nao retornada.");
-        return;
+        if (!result) {
+          await signInWithRedirect(auth, provider);
+          return;
+        }
+
+        const credential = GoogleAuthProvider.credentialFromResult(result);
+
+        if (!credential?.accessToken && !credential?.idToken) {
+          setMessage("Credencial Google nao retornada.");
+          return;
+        }
+
+        await fetch(callbackUrl, {
+          body: JSON.stringify({
+            accessToken: credential.accessToken ?? "",
+            idToken: credential.idToken ?? "",
+          }),
+          headers: {
+            "Content-Type": "application/json",
+          },
+          method: "POST",
+        });
+
+        window.sessionStorage.removeItem("textream-browser-auth-callback");
+        setMessage("Login concluido. Pode voltar ao Textream.");
+      } catch (error) {
+        setMessage(
+          error instanceof Error ? error.message : "Erro ao autenticar."
+        );
       }
-
-      await fetch(callbackUrl, {
-        body: JSON.stringify({
-          accessToken: credential.accessToken ?? "",
-          idToken: credential.idToken ?? "",
-        }),
-        headers: {
-          "Content-Type": "application/json",
-        },
-        method: "POST",
-      });
-
-      setMessage("Login concluido. Pode voltar ao Textream.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Erro ao autenticar.");
-    } finally {
-      setIsSubmitting(false);
     }
-  }
+
+    void signInAndReturnCredential();
+  }, []);
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-[#12161C] p-5 text-white">
@@ -102,24 +123,13 @@ export function BrowserGoogleAuthClient() {
         </div>
         <h1 className="text-xl font-bold">Login no navegador</h1>
         <p className="mt-3 text-sm leading-6 text-slate-400">
-          Use a mesma conta Google conectada ao Textream.
+          Voce sera redirecionado para entrar com Google.
         </p>
 
-        <button
-          className="mt-6 flex w-full items-center justify-center gap-3 rounded-xl bg-white px-4 py-3 text-sm font-bold text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-70"
-          disabled={isSubmitting}
-          onClick={signInAndReturnCredential}
-          type="button"
-        >
-          {isSubmitting ? (
-            <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <span className="flex size-5 items-center justify-center rounded-full bg-slate-950 text-xs font-bold text-white">
-              G
-            </span>
-          )}
-          {isSubmitting ? "Aguarde" : "Continuar com Google"}
-        </button>
+        <div className="mt-6 flex items-center justify-center gap-3 rounded-xl bg-white/5 px-4 py-3 text-sm font-bold text-slate-200">
+          <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+          Abrindo Google
+        </div>
 
         {message && (
           <div className="mt-5 rounded-xl bg-white/5 px-3 py-2 text-xs text-slate-300">
