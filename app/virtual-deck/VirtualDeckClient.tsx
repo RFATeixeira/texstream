@@ -114,6 +114,11 @@ type MacroTemplate = {
   obsMoveSourceName?: string;
   obsMovePositions?: ObsMovePosition[];
   obsMoveCurrentPositionId?: string;
+  soundboardAudioId?: string;
+  soundboardAudioName?: string;
+  soundboardAudioFileName?: string;
+  soundboardAudioDataUrl?: string;
+  soundboardAudioVolume?: number;
 };
 
 type ObsAudioInputState = {
@@ -1074,6 +1079,18 @@ function getActionLabel(macro?: MacroTemplate) {
     return macro.obsAudioInputName?.trim() || "Audio";
   }
 
+  if (macro.actionType === "soundboard-audio") {
+    return (
+      macro.soundboardAudioName?.trim() ||
+      macro.soundboardAudioFileName?.trim() ||
+      "Tocar audio"
+    );
+  }
+
+  if (macro.actionType === "soundboard-stop") {
+    return "Parar audio";
+  }
+
   return macro.name?.trim() || "Macro";
 }
 
@@ -1103,6 +1120,20 @@ function getImageSrc(macro?: MacroTemplate) {
 }
 
 function DeckIcon({ macro }: { macro?: MacroTemplate }) {
+  if (
+    macro?.actionType === "soundboard-audio" &&
+    (!macro.deckIcon || macro.deckIcon === "auto")
+  ) {
+    return <FaVolumeUp className="size-14 sm:size-16" aria-hidden="true" />;
+  }
+
+  if (
+    macro?.actionType === "soundboard-stop" &&
+    (!macro.deckIcon || macro.deckIcon === "auto")
+  ) {
+    return <FaVolumeMute className="size-14 sm:size-16" aria-hidden="true" />;
+  }
+
   if (macro?.actionType === "obs-audio-mute") {
     const normalizedIcon = macro.deckIcon?.trim().toLowerCase() ?? "";
     const normalizedInputName = macro.obsAudioInputName?.trim().toLowerCase() ?? "";

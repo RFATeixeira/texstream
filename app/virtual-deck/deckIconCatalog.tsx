@@ -166,6 +166,14 @@ function resolveDeckIconId(iconId?: string, actionType?: string) {
     return "obs";
   }
 
+  if (actionType === "soundboard-audio") {
+    return "FaVolumeUp";
+  }
+
+  if (actionType === "soundboard-stop") {
+    return "FaVolumeMute";
+  }
+
   return deckIconById.get(normalizedIconId)?.id ?? "FaKeyboard";
 }
 
