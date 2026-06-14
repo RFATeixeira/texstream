@@ -3,11 +3,17 @@
 import {
   getRedirectResult,
   GoogleAuthProvider,
+  onAuthStateChanged,
   signInWithRedirect,
+  type Auth,
+  type User,
 } from "firebase/auth";
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { getFirebaseAuth, isFirebaseConfigured } from "../../../lib/firebase";
+
+const CALLBACK_STORAGE_KEY = "textream-browser-auth-callback";
+const REDIRECT_PENDING_STORAGE_KEY = "textream-browser-auth-redirect-pending";
 
 function TextreamLogoIcon({ size = 36 }: { size?: number }) {
   return (
@@ -23,8 +29,28 @@ function TextreamLogoIcon({ size = 36 }: { size?: number }) {
         transform="matrix(853.33331,0,0,-933.33331,0,933.33331)"
       />
       <path
+        fill="#0177a9"
+        d="m 0.0718736,0.8385724 0.1062518,-0.18 h 0.1921864 l -0.1156257,0.18 z"
+        transform="matrix(853.33331,0,0,-933.33331,0,933.33331)"
+      />
+      <path
         fill="#0083bb"
         d="m 0.3687489,0.6585724 -0.1156225,0.18 h 0.0921861 l 0.1140629,-0.18 z"
+        transform="matrix(853.33331,0,0,-933.33331,0,933.33331)"
+      />
+      <path
+        fill="#018dc8"
+        d="m 0.3437496,0.8385724 0.1140629,-0.18 0.1953121,-0.3100003 0.1078115,0.1671428 -0.2078118,0.3228575 z"
+        transform="matrix(853.33331,0,0,-933.33331,0,933.33331)"
+      />
+      <path
+        fill="#019add"
+        d="m 0.6671871,0.6585724 h 0.084375 l -0.1249996,0.18 H 0.5515614 Z"
+        transform="matrix(853.33331,0,0,-933.33331,0,933.33331)"
+      />
+      <path
+        fill="#00aaf0"
+        d="m 0.7499993,0.6585724 h 0.1046889 l -0.1265625,0.18 H 0.6249996 Z"
         transform="matrix(853.33331,0,0,-933.33331,0,933.33331)"
       />
       <path
@@ -34,6 +60,50 @@ function TextreamLogoIcon({ size = 36 }: { size?: number }) {
       />
     </svg>
   );
+}
+
+function waitForAuthUser(auth: Auth, timeoutMs: number) {
+  if (auth.currentUser) {
+    return Promise.resolve(auth.currentUser);
+  }
+
+  return new Promise<User | null>((resolve) => {
+    const timeout = window.setTimeout(() => {
+      unsubscribe();
+      resolve(auth.currentUser);
+    }, timeoutMs);
+
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      window.clearTimeout(timeout);
+      unsubscribe();
+      resolve(user);
+    });
+  });
+}
+
+async function postLoginCredential(
+  callbackUrl: string,
+  credential: { accessToken?: string | null; idToken?: string | null },
+  user: User
+) {
+  const firebaseIdToken = await user.getIdToken();
+  const idToken = credential.idToken || firebaseIdToken;
+
+  const response = await fetch(callbackUrl, {
+    body: JSON.stringify({
+      accessToken: credential.accessToken ?? "",
+      firebaseIdToken,
+      idToken,
+    }),
+    headers: {
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Callback local retornou HTTP ${response.status}.`);
+  }
 }
 
 export function BrowserGoogleAuthClient() {
@@ -51,13 +121,10 @@ export function BrowserGoogleAuthClient() {
 
       const callbackUrl =
         new URLSearchParams(window.location.search).get("callback") ||
-        window.sessionStorage.getItem("textream-browser-auth-callback");
+        window.sessionStorage.getItem(CALLBACK_STORAGE_KEY);
 
       if (callbackUrl) {
-        window.sessionStorage.setItem(
-          "textream-browser-auth-callback",
-          callbackUrl
-        );
+        window.sessionStorage.setItem(CALLBACK_STORAGE_KEY, callbackUrl);
       }
 
       if (!callbackUrl) {
@@ -78,34 +145,45 @@ export function BrowserGoogleAuthClient() {
       });
 
       try {
+        const hadPendingRedirect =
+          window.sessionStorage.getItem(REDIRECT_PENDING_STORAGE_KEY) === "1";
         const result = await getRedirectResult(auth);
 
-        if (!result) {
+        if (result?.user) {
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+
+          await postLoginCredential(callbackUrl, credential ?? {}, result.user);
+
+          window.sessionStorage.removeItem(CALLBACK_STORAGE_KEY);
+          window.sessionStorage.removeItem(REDIRECT_PENDING_STORAGE_KEY);
+          setMessage("Login concluido. Pode voltar ao Textream.");
+          return;
+        }
+
+        const currentUser = await waitForAuthUser(
+          auth,
+          hadPendingRedirect ? 5000 : 1000
+        );
+
+        if (currentUser) {
+          await postLoginCredential(callbackUrl, {}, currentUser);
+
+          window.sessionStorage.removeItem(CALLBACK_STORAGE_KEY);
+          window.sessionStorage.removeItem(REDIRECT_PENDING_STORAGE_KEY);
+          setMessage("Login concluido. Pode voltar ao Textream.");
+          return;
+        }
+
+        if (!hadPendingRedirect) {
+          window.sessionStorage.setItem(REDIRECT_PENDING_STORAGE_KEY, "1");
           await signInWithRedirect(auth, provider);
           return;
         }
 
-        const credential = GoogleAuthProvider.credentialFromResult(result);
-
-        if (!credential?.accessToken && !credential?.idToken) {
-          setMessage("Credencial Google nao retornada.");
-          return;
-        }
-
-        await fetch(callbackUrl, {
-          body: JSON.stringify({
-            accessToken: credential.accessToken ?? "",
-            idToken: credential.idToken ?? "",
-          }),
-          headers: {
-            "Content-Type": "application/json",
-          },
-          method: "POST",
-        });
-
-        window.sessionStorage.removeItem("textream-browser-auth-callback");
-        setMessage("Login concluido. Pode voltar ao Textream.");
+        window.sessionStorage.removeItem(REDIRECT_PENDING_STORAGE_KEY);
+        setMessage("Nao foi possivel concluir o retorno do Google. Tente novamente.");
       } catch (error) {
+        window.sessionStorage.removeItem(REDIRECT_PENDING_STORAGE_KEY);
         setMessage(
           error instanceof Error ? error.message : "Erro ao autenticar."
         );
